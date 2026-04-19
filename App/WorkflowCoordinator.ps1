@@ -10,10 +10,13 @@
 
 # ============================================================
 #  MODULE DISPATCHER
-#  Routes a module definition to its entry point.
-#  V1: all active modules are System modules.
-#  V1.1: add routing for Network / Hardware when ready.
+#  Routes a module definition to its entry point by family.
+#  Add new families here as modules are implemented.
 # ============================================================
+
+# Network module IDs — routed to Invoke-NetworkSubmodule
+$Script:NetworkModuleIds = @("network")
+
 function Invoke-ModuleById {
     param(
         [Parameter(Mandatory)] [hashtable]     $ModuleDef,
@@ -21,8 +24,15 @@ function Invoke-ModuleById {
         [Parameter(Mandatory)] [hashtable]     $State
     )
 
-    # All current V1 modules route through the System module router.
-    # Future module families (Network, Hardware) will add cases here.
+    if ($ModuleDef.Id -in $Script:NetworkModuleIds) {
+        return Invoke-NetworkSubmodule `
+            -ModuleId   $ModuleDef.Id `
+            -ModuleName $ModuleDef.Name `
+            -Context    $Context `
+            -State      $State
+    }
+
+    # Default family: System module router
     return Invoke-SystemSubmodule `
         -ModuleId   $ModuleDef.Id `
         -ModuleName $ModuleDef.Name `

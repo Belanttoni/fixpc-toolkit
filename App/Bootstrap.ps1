@@ -77,8 +77,8 @@ function Get-AllModuleDefinitions {
         @{ Id = "winupdate"; Name = "Windows Update";         Desc = "Detect & install updates";           ScriptPath = "Modules\System\SystemModule.ps1" },
         @{ Id = "startup";   Name = "Startup Programs";        Desc = "Boot impact analysis";              ScriptPath = "Modules\System\SystemModule.ps1" },
         @{ Id = "smart";     Name = "Disk SMART Health";       Desc = "Physical drive health";             ScriptPath = "Modules\System\SystemModule.ps1" },
-        @{ Id = "ram";       Name = "RAM Health";              Desc = "Memory diagnostic check";           ScriptPath = "Modules\System\SystemModule.ps1" }
-        # @{ Id = "network"; Name = "Network Diagnostics";     Desc = "Connectivity & DNS checks";         ScriptPath = "Modules\Network\NetworkModule.ps1" }  # V1.1
+        @{ Id = "ram";       Name = "RAM Health";              Desc = "Memory diagnostic check";           ScriptPath = "Modules\System\SystemModule.ps1"  },
+        @{ Id = "network";   Name = "Network Diagnostics";    Desc = "Connectivity & DNS checks";          ScriptPath = "Modules\Network\NetworkModule.ps1" }
     )
 }
 

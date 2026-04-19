@@ -292,6 +292,72 @@ function Build-ModuleSectionContent {
             return "$note<table><tr><th>Slot</th><th>Size</th><th>Speed</th><th>Manufacturer</th></tr>$rows</table>"
         }
 
+        "Network Diagnostics" {
+            # ── Primary adapter / IP summary ──────────────────
+            $adapterLine = ""
+            if ($ex["adapterName"]) {
+                $ip      = if ($ex["localIP"])      { $ex["localIP"]                               } else { "—" }
+                $prefix  = if ($ex["prefixLength"]) { "/$($ex['prefixLength'])"                     } else { "" }
+                $gw      = if ($ex["gateway"])      { $ex["gateway"]                               } else { "—" }
+                $dnsStr  = if ($ex["dnsServers"] -and @($ex["dnsServers"]).Count -gt 0) {
+                    (Escape-Html ($ex["dnsServers"] -join ", "))
+                } else { "—" }
+                $adapterLine = "<p><strong>Adapter:</strong> $(Escape-Html $ex['adapterName']) &nbsp;|&nbsp; " +
+                               "<strong>IP:</strong> $ip$prefix &nbsp;|&nbsp; " +
+                               "<strong>Gateway:</strong> $gw &nbsp;|&nbsp; " +
+                               "<strong>DNS:</strong> $dnsStr</p>"
+            }
+
+            # ── Connectivity matrix ───────────────────────────
+            $conn  = $ex["connectivity"]
+            $matrix = ""
+            if ($conn) {
+                $CHK  = "&#10004;"   # ✔
+                $CROS = "&#10006;"   # ✖
+
+                $rows = @(
+                    @{ Check = "Loopback (127.0.0.1)";  Data = $conn["loopback"] },
+                    @{ Check = "Gateway";                Data = $conn["gateway"]  },
+                    @{ Check = "Internet (8.8.8.8)";    Data = $conn["internet"] },
+                    @{ Check = "DNS Resolution";         Data = $conn["dns"]      }
+                ) | ForEach-Object {
+                    $label  = $_.Check
+                    $item   = $_.Data
+                    if ($item -and $item["target"]) { $label += " ($($item['target']))" }
+                    $ok     = if ($item) { $item["ok"] } else { $false }
+                    $detail = if ($item) { Escape-Html $item["detail"] } else { "" }
+                    $cls    = if ($ok) { "ok" } else { "error" }
+                    $sym    = if ($ok) { $CHK } else { $CROS }
+                    "<tr><td>$label</td><td class='$cls'>$sym $(if($ok){'PASS'}else{'FAIL'})</td><td>$detail</td></tr>"
+                }
+                $matrix = "<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>" +
+                          ($rows -join "") + "</table>"
+            }
+
+            # ── Adapter inventory (all adapters) ──────────────
+            $adapterTable = ""
+            if ($ex["adapters"] -and @($ex["adapters"]).Count -gt 0) {
+                $aRows = ($ex["adapters"] | ForEach-Object {
+                    $cls = if ($_.Class) { " class='$($_.Class)'" } else { "" }
+                    "<tr$cls><td>$(Escape-Html $_.Name)</td><td>$(Escape-Html $_.Desc)</td><td>$($_.Status)</td><td>$(Escape-Html $_.Speed)</td></tr>"
+                }) -join ""
+                $adapterTable = "<p><strong>All adapters:</strong></p>" +
+                    "<table><tr><th>Name</th><th>Description</th><th>Status</th><th>Speed</th></tr>$aRows</table>"
+            }
+
+            # ── Probable cause ────────────────────────────────
+            $cause = if ($ex["probableCause"]) {
+                "<p><strong>Diagnosis:</strong> $(Escape-Html $ex['probableCause'])</p>"
+            } else { "" }
+
+            # ── Reboot notice ─────────────────────────────────
+            $reboot = if ($ex["rebootRequired"] -eq $true) {
+                "<p class='warn'><strong>Reboot required</strong> to complete network stack repairs (Winsock / TCP/IP reset applied).</p>"
+            } else { "" }
+
+            return "$adapterLine$matrix$adapterTable$cause$reboot"
+        }
+
         default {
             return "<p>Module: $($Result.ModuleName) | Findings: $($Result.Findings.Count) | Severity: $($Result.Severity)</p>"
         }

@@ -1,34 +1,73 @@
 <#
 .SYNOPSIS
-    FixPC Toolkit — Network Module
-    Minimal placeholder. Module is NOT active in V1.0.
-    Will be implemented as a full stage-subdirectory module in V1.1.
+    FixPC Toolkit — Network Module (Router)
+    Reference implementation for the Network module family.
 
-    Planned checks (V1.1):
-        - Internet connectivity (Test-NetConnection)
-        - DNS resolution test
-        - Network adapter status
-        - IP configuration (ipconfig)
-        - Winsock / TCP/IP stack health
-        - Ping latency to gateway and 8.8.8.8
-        - Active network connections (netstat)
-        - Firewall status
+    Covers:
+        network — Full network diagnostic (adapter, IP, connectivity, DNS)
 
-.VERSION 0.1 (placeholder)
+    Each sub-module follows: Collect → Analyze → Repair → Export
+    Phase scriptblocks live in the stage subdirectories:
+        Collect\NetworkCollect.ps1
+        Analyze\NetworkAnalyze.ps1
+        Repair\NetworkRepair.ps1
+        Export\NetworkExport.ps1
+
+    Exposed function: Invoke-NetworkSubmodule
+        Same signature as Invoke-SystemSubmodule so WorkflowCoordinator's
+        Invoke-ModuleById can route to it identically.
+
+.VERSION 1.0
 #>
 
-function Invoke-NetworkModule {
-    param([PSCustomObject]$Context, [hashtable]$State)
+# ============================================================
+#  DOT-SOURCE STAGE FILES
+# ============================================================
+$ModuleRoot = $PSScriptRoot
 
-    $Result          = New-ModuleResult -ModuleName "Network Diagnostics" -ExecutionMode $Context.Mode
-    $Result.Stage    = [ModuleStage]::Skipped
-    $Result.StartedAt  = Get-Date
-    $Result.FinishedAt = Get-Date
-    $Result.Findings.Add((New-Finding -Title "Network Module Not Yet Active" -Severity "info" `
-        -Description "Network module is planned for V1.1."))
+. "$ModuleRoot\Collect\NetworkCollect.ps1"
+. "$ModuleRoot\Analyze\NetworkAnalyze.ps1"
+. "$ModuleRoot\Repair\NetworkRepair.ps1"
+. "$ModuleRoot\Export\NetworkExport.ps1"
 
-    Write-LogInfo -Source "NetworkModule" -Message "Network module skipped (placeholder — V1.1)."
-    return $Result
+# ============================================================
+#  MODULE ROUTER
+#  Dispatches to the correct sub-module based on ModuleId.
+#  V1: only "network" exists. Future IDs can be added here.
+# ============================================================
+function Invoke-NetworkSubmodule {
+    param(
+        [Parameter(Mandatory)] [string]        $ModuleId,
+        [Parameter(Mandatory)] [string]        $ModuleName,
+        [Parameter(Mandatory)] [PSCustomObject]$Context,
+        [Parameter(Mandatory)] [hashtable]     $State
+    )
+
+    switch ($ModuleId) {
+        "network" { return Invoke-NetworkDiagnostic -Context $Context -State $State }
+        default {
+            Write-LogWarning -Source "NetworkModule" -Message "Unknown network module ID: '$ModuleId'"
+            return $null
+        }
+    }
 }
 
-Write-Verbose "[NetworkModule] Network module placeholder loaded. NOT active in V1.0."
+# ============================================================
+#  SUB-MODULE INVOCATION
+# ============================================================
+
+function Invoke-NetworkDiagnostic {
+    param([PSCustomObject]$Context, [hashtable]$State)
+
+    return Invoke-ModuleLifecycle `
+        -ModuleId      "network" `
+        -ModuleName    "Network Diagnostics" `
+        -ExecutionMode $Context.Mode `
+        -State         $State `
+        -CollectBlock  $Script:Collect_Network `
+        -AnalyzeBlock  $Script:Analyze_Network `
+        -RepairBlock   $Script:Repair_Network `
+        -ExportBlock   $Script:Export_Network
+}
+
+Write-Verbose "[NetworkModule] Network module loaded (stage subdirectory architecture)."
