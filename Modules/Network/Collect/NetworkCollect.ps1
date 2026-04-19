@@ -38,8 +38,10 @@ $Script:Collect_Network = {
         $ipEntry                     = $primary.IPv4Address | Select-Object -First 1
         $Result.Data["LocalIP"]      = if ($ipEntry) { $ipEntry.IPAddress    } else { $null }
         $Result.Data["PrefixLength"] = if ($ipEntry) { $ipEntry.PrefixLength } else { $null }
-        $Result.Data["Gateway"]      = $primary.IPv4DefaultGateway.NextHop
-        $Result.Data["DNSServers"]   = @($primary.DNSServer.ServerAddresses)
+        $Result.Data["Gateway"]      = if ($primary.IPv4DefaultGateway) { $primary.IPv4DefaultGateway.NextHop } else { $null }
+        $Result.Data["DNSServers"]   = if ($primary.DNSServer -and $primary.DNSServer.ServerAddresses) {
+            @($primary.DNSServer.ServerAddresses)
+        } else { @() }
         $Result.Data["AdapterName"]  = $primary.InterfaceAlias
     } else {
         $Result.Data["LocalIP"]      = $null

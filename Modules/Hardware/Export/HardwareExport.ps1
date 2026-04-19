@@ -135,17 +135,7 @@ $Script:Export_Hardware = {
 
     # ============================================================
     #  OVERALL CLASS  (worst severity across all findings)
+    #  Uses Get-HighestSeverity from Core/Contracts.ps1 — do not duplicate.
     # ============================================================
-    $sevOrder = @{ "critical"=4; "error"=3; "warn"=2; "info"=1; "ok"=0 }
-    $worstScore = 0
-    $worstClass = "ok"
-    foreach ($finding in $Result.Findings) {
-        $sev   = $finding.Severity.ToLower()
-        $score = if ($sevOrder.ContainsKey($sev)) { $sevOrder[$sev] } else { 0 }
-        if ($score -gt $worstScore) {
-            $worstScore = $score
-            $worstClass = $sev
-        }
-    }
-    $Result.ExportData["overallClass"] = $worstClass
+    $Result.ExportData["overallClass"] = Get-HighestSeverity -Findings $Result.Findings
 }

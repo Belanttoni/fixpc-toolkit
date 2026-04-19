@@ -359,8 +359,6 @@ function Build-ModuleSectionContent {
         }
 
         "Hardware Diagnostics" {
-            $ex = $Result.ExportData
-
             # ── CPU / RAM / GPU summary line ─────────────────────
             $cpu     = $ex["cpu"]
             $ram     = $ex["ram"]
@@ -379,12 +377,12 @@ function Build-ModuleSectionContent {
                 "</table>"
 
             # ── BIOS / Motherboard ────────────────────────────────
-            $bios = $ex["bios"]
-            $mb   = $ex["mb"]
+            $bios   = $ex["bios"]
+            $mb     = $ex["mb"]
             $hwInfo = ""
-            if ($mb -and $mb["manufacturer"] -ne "Unknown") {
-                $hwInfo += "<p><strong>Motherboard:</strong> $($mb['manufacturer']) $($mb['product'])  &nbsp;|&nbsp; " +
-                           "<strong>BIOS:</strong> $($bios['vendor']) $($bios['version'])  ($($bios['date']))</p>"
+            if ($mb -and $bios -and $mb["manufacturer"] -ne "Unknown") {
+                $hwInfo += "<p><strong>Motherboard:</strong> $(Escape-Html $mb['manufacturer']) $(Escape-Html $mb['product'])  &nbsp;|&nbsp; " +
+                           "<strong>BIOS:</strong> $(Escape-Html $bios['vendor']) $(Escape-Html $bios['version'])  ($($bios['date']))</p>"
             }
 
             # ── Logical disk table ────────────────────────────────
