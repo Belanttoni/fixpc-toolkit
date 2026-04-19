@@ -358,6 +358,89 @@ function Build-ModuleSectionContent {
             return "$adapterLine$matrix$adapterTable$cause$reboot"
         }
 
+        "Hardware Diagnostics" {
+            $ex = $Result.ExportData
+
+            # ── CPU / RAM / GPU summary line ─────────────────────
+            $cpu     = $ex["cpu"]
+            $ram     = $ex["ram"]
+            $gpuName = if ($ex["gpuName"]) { $ex["gpuName"] } else { "N/A" }
+            $cpuStr  = if ($cpu -and $cpu["name"] -ne "Unknown") {
+                "$($cpu['name'])  ($($cpu['cores'])C / $($cpu['logical'])T @ $([math]::Round($cpu['maxMHz']/1000,2)) GHz)  Load: $($cpu['loadPct'])%"
+            } else { "CPU data unavailable" }
+            $ramStr  = if ($ram -and $ram["totalGB"] -gt 0) {
+                "$($ram['usedPct'])% used — $($ram['usedGB']) GB / $($ram['totalGB']) GB  ($($ram['stickCount']) stick(s))"
+            } else { "RAM data unavailable" }
+
+            $summaryLine = "<table><tr><th>Component</th><th>Detail</th></tr>" +
+                "<tr><td>CPU</td><td>$cpuStr</td></tr>" +
+                "<tr><td>RAM</td><td>$ramStr</td></tr>" +
+                "<tr><td>GPU</td><td>$gpuName</td></tr>" +
+                "</table>"
+
+            # ── BIOS / Motherboard ────────────────────────────────
+            $bios = $ex["bios"]
+            $mb   = $ex["mb"]
+            $hwInfo = ""
+            if ($mb -and $mb["manufacturer"] -ne "Unknown") {
+                $hwInfo += "<p><strong>Motherboard:</strong> $($mb['manufacturer']) $($mb['product'])  &nbsp;|&nbsp; " +
+                           "<strong>BIOS:</strong> $($bios['vendor']) $($bios['version'])  ($($bios['date']))</p>"
+            }
+
+            # ── Logical disk table ────────────────────────────────
+            $diskTable = ""
+            $diskRows  = $ex["disks"]
+            if ($diskRows -and $diskRows.Count -gt 0) {
+                $diskRows_html = ""
+                foreach ($d in $diskRows) {
+                    $cls    = $d["class"]
+                    $lbl    = if ($d["label"]) { " ($($d['label']))" } else { "" }
+                    $bar    = $d["usedPct"]
+                    $barCol = switch ($cls) {
+                        "critical" { "#dc3545" } "error" { "#fd7e14" }
+                        "warn"     { "#ffc107" } default  { "#28a745" }
+                    }
+                    $diskRows_html += "<tr class='$cls'>" +
+                        "<td><strong>$($d['drive'])</strong>$lbl</td>" +
+                        "<td>$($d['totalGB']) GB</td>" +
+                        "<td>$($d['freeGB']) GB</td>" +
+                        "<td><div style='background:#333;border-radius:3px;height:12px;width:120px'>" +
+                        "<div style='background:$barCol;height:12px;width:$($bar)%;border-radius:3px'></div></div> $bar%</td>" +
+                        "</tr>"
+                }
+                $diskTable = "<h4>Logical Drives</h4><table>" +
+                    "<tr><th>Drive</th><th>Total</th><th>Free</th><th>Used</th></tr>" +
+                    $diskRows_html + "</table>"
+            }
+
+            # ── Physical disk (SMART) table ───────────────────────
+            $smartTable = ""
+            $physDisks  = $ex["physDisks"]
+            if ($physDisks -and $physDisks.Count -gt 0) {
+                $smartRows_html = ""
+                foreach ($pd in $physDisks) {
+                    $cls = $pd["class"]
+                    $healthBadge = switch ($pd["health"]) {
+                        "Healthy"   { "<span class='badge badge-ok'>Healthy</span>"       }
+                        "Warning"   { "<span class='badge badge-warn'>Warning</span>"     }
+                        "Unhealthy" { "<span class='badge badge-error'>Unhealthy</span>"  }
+                        default     { "<span class='badge badge-info'>$($pd['health'])</span>" }
+                    }
+                    $smartRows_html += "<tr class='$cls'>" +
+                        "<td>$($pd['name'])</td>" +
+                        "<td>$($pd['type'])</td>" +
+                        "<td>$($pd['sizeGB']) GB</td>" +
+                        "<td>$healthBadge</td>" +
+                        "</tr>"
+                }
+                $smartTable = "<h4>Physical Drives (SMART)</h4><table>" +
+                    "<tr><th>Drive</th><th>Type</th><th>Size</th><th>Health</th></tr>" +
+                    $smartRows_html + "</table>"
+            }
+
+            return "$summaryLine$hwInfo$diskTable$smartTable"
+        }
+
         default {
             return "<p>Module: $($Result.ModuleName) | Findings: $($Result.Findings.Count) | Severity: $($Result.Severity)</p>"
         }

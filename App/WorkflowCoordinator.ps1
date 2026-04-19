@@ -15,7 +15,10 @@
 # ============================================================
 
 # Network module IDs — routed to Invoke-NetworkSubmodule
-$Script:NetworkModuleIds = @("network")
+$Script:NetworkModuleIds  = @("network")
+
+# Hardware module IDs — routed to Invoke-HardwareSubmodule
+$Script:HardwareModuleIds = @("hardware")
 
 function Invoke-ModuleById {
     param(
@@ -26,6 +29,14 @@ function Invoke-ModuleById {
 
     if ($ModuleDef.Id -in $Script:NetworkModuleIds) {
         return Invoke-NetworkSubmodule `
+            -ModuleId   $ModuleDef.Id `
+            -ModuleName $ModuleDef.Name `
+            -Context    $Context `
+            -State      $State
+    }
+
+    if ($ModuleDef.Id -in $Script:HardwareModuleIds) {
+        return Invoke-HardwareSubmodule `
             -ModuleId   $ModuleDef.Id `
             -ModuleName $ModuleDef.Name `
             -Context    $Context `

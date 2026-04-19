@@ -86,7 +86,8 @@ function Assert-IsAdministrator {
 # ============================================================
 $Script:ValidModuleIds = @(
     "sysinfo", "sfc", "dism", "chkdsk", "temp",
-    "events", "winupdate", "startup", "smart", "ram", "network"
+    "events", "winupdate", "startup", "smart", "ram",
+    "network", "hardware"
 )
 
 function Test-ValidModuleId {

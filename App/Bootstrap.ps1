@@ -78,7 +78,8 @@ function Get-AllModuleDefinitions {
         @{ Id = "startup";   Name = "Startup Programs";        Desc = "Boot impact analysis";              ScriptPath = "Modules\System\SystemModule.ps1" },
         @{ Id = "smart";     Name = "Disk SMART Health";       Desc = "Physical drive health";             ScriptPath = "Modules\System\SystemModule.ps1" },
         @{ Id = "ram";       Name = "RAM Health";              Desc = "Memory diagnostic check";           ScriptPath = "Modules\System\SystemModule.ps1"  },
-        @{ Id = "network";   Name = "Network Diagnostics";    Desc = "Connectivity & DNS checks";          ScriptPath = "Modules\Network\NetworkModule.ps1" }
+        @{ Id = "network";   Name = "Network Diagnostics";    Desc = "Connectivity & DNS checks";          ScriptPath = "Modules\Network\NetworkModule.ps1" },
+        @{ Id = "hardware";  Name = "Hardware Diagnostics";   Desc = "CPU, RAM, disk & SMART health";       ScriptPath = "Modules\Hardware\HardwareModule.ps1" }
     )
 }
 

@@ -333,6 +333,7 @@ function Start-BackgroundWorkflow {
         . "$ToolkitRoot\App\WorkflowCoordinator.ps1"
         . "$ToolkitRoot\Modules\System\SystemModule.ps1"
         . "$ToolkitRoot\Modules\Network\NetworkModule.ps1"
+        . "$ToolkitRoot\Modules\Hardware\HardwareModule.ps1"
         . "$ToolkitRoot\Reports\HTML.ps1"
         . "$ToolkitRoot\Reports\TXT.ps1"
         . "$ToolkitRoot\Reports\JSON.ps1"
