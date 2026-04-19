@@ -118,7 +118,7 @@ function Show-MainForm {
         -Text        "  View Report" `
         -Location    (New-Object System.Drawing.Point(392, 593)) `
         -Size        (New-Object System.Drawing.Size(145, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(30, 50, 30) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(30, 50, 30)) `
         -ForeColor   $Script:Theme.Green `
         -BorderColor $Script:Theme.Green `
         -Enabled     $false
@@ -127,7 +127,7 @@ function Show-MainForm {
         -Text        "  JSON" `
         -Location    (New-Object System.Drawing.Point(548, 593)) `
         -Size        (New-Object System.Drawing.Size(80, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(10, 20, 40) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(10, 20, 40)) `
         -ForeColor   $Script:Theme.Accent `
         -BorderColor $Script:Theme.Accent `
         -Enabled     $false
@@ -136,7 +136,7 @@ function Show-MainForm {
         -Text        "X  Exit" `
         -Location    (New-Object System.Drawing.Point(650, 593)) `
         -Size        (New-Object System.Drawing.Size(150, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(40, 15, 20) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(40, 15, 20)) `
         -ForeColor   $Script:Theme.Red `
         -BorderColor $Script:Theme.Red
 
