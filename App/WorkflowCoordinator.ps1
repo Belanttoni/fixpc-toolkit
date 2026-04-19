@@ -8,6 +8,28 @@
 .VERSION 1.0
 #>
 
+# ============================================================
+#  MODULE DISPATCHER
+#  Routes a module definition to its entry point.
+#  V1: all active modules are System modules.
+#  V1.1: add routing for Network / Hardware when ready.
+# ============================================================
+function Invoke-ModuleById {
+    param(
+        [Parameter(Mandatory)] [hashtable]     $ModuleDef,
+        [Parameter(Mandatory)] [PSCustomObject]$Context,
+        [Parameter(Mandatory)] [hashtable]     $State
+    )
+
+    # All current V1 modules route through the System module router.
+    # Future module families (Network, Hardware) will add cases here.
+    return Invoke-SystemSubmodule `
+        -ModuleId   $ModuleDef.Id `
+        -ModuleName $ModuleDef.Name `
+        -Context    $Context `
+        -State      $State
+}
+
 function Start-DiagnosticWorkflow {
     <#
     .SYNOPSIS
@@ -49,7 +71,7 @@ function Start-DiagnosticWorkflow {
         Write-LogInfo -Source "Coordinator" -Message "Starting module: $($modDef.Id) [$stepNum/$totalModules]"
 
         try {
-            $result = Invoke-SystemSubmodule -ModuleId $modDef.Id -ModuleName $modDef.Name -Context $Context -State $State
+            $result = Invoke-ModuleById -ModuleDef $modDef -Context $Context -State $State
 
             if ($null -ne $result) {
                 $results.Add($result)

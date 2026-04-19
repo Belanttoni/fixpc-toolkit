@@ -30,9 +30,9 @@ $Script:Export_SysInfo = {
 # ============================================================
 $Script:Export_SFC = {
     param($Result, $State)
-    $f = $Result.Findings[0]
-    $Result.ExportData["summary"]    = $f.Description
-    $Result.ExportData["repaired"]   = $f.Repaired
+    $f = if ($Result.Findings.Count -gt 0) { $Result.Findings[0] } else { $null }
+    $Result.ExportData["summary"]    = if ($f) { $f.Description } else { "No findings recorded." }
+    $Result.ExportData["repaired"]   = if ($f) { $f.Repaired    } else { $false }
     $Result.ExportData["logFile"]    = $Result.Data["LogFile"]
     # Include note if scannow ran (repair mode)
     $Result.ExportData["repairNote"] = if ($Result.Data["ScanOutput"] -ne "") {
@@ -47,9 +47,9 @@ $Script:Export_SFC = {
 # ============================================================
 $Script:Export_DISM = {
     param($Result, $State)
-    $f = $Result.Findings[0]
-    $Result.ExportData["summary"]  = $f.Description
-    $Result.ExportData["repaired"] = $f.Repaired
+    $f = if ($Result.Findings.Count -gt 0) { $Result.Findings[0] } else { $null }
+    $Result.ExportData["summary"]  = if ($f) { $f.Description } else { "No findings recorded." }
+    $Result.ExportData["repaired"] = if ($f) { $f.Repaired    } else { $false }
     $Result.ExportData["logFile"]  = $Result.Data["LogFile"]
     # Indicate which DISM action was performed (if any)
     $Result.ExportData["repairNote"] = if ($Result.Data["RestoreOutput"] -ne "") {
@@ -66,8 +66,9 @@ $Script:Export_DISM = {
 # ============================================================
 $Script:Export_ChkDsk = {
     param($Result, $State)
-    $Result.ExportData["summary"]    = $Result.Findings[0].Description
-    $Result.ExportData["repaired"]   = $Result.Findings[0].Repaired
+    $f = if ($Result.Findings.Count -gt 0) { $Result.Findings[0] } else { $null }
+    $Result.ExportData["summary"]    = if ($f) { $f.Description } else { "No findings recorded." }
+    $Result.ExportData["repaired"]   = if ($f) { $f.Repaired    } else { $false }
     $Result.ExportData["method"]     = "chkdsk /scan (online) + /spotfix if needed — no reboot required"
     $Result.ExportData["scanOutput"] = $Result.Data["ScanOutput"]
 }
@@ -116,6 +117,11 @@ $Script:Export_WinUpdate = {
     $Result.ExportData["pendingCount"]   = $Result.Data["PendingCount"]
     $Result.ExportData["titles"]         = if ($null -ne $Result.Data["PendingTitles"])  { $Result.Data["PendingTitles"]  } else { @()    }
     $Result.ExportData["rebootRequired"] = if ($null -ne $Result.Data["RebootRequired"]) { $Result.Data["RebootRequired"] } else { $false }
+
+    # Release COM objects unconditionally — covers both DiagnoseOnly (Repair skipped)
+    # and SafeRepair/FullRepair (Repair already nulled them, but idempotent).
+    $Result.Data["Session"]      = $null
+    $Result.Data["SearchResult"] = $null
 }
 
 # ============================================================

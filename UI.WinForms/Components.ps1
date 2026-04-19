@@ -23,7 +23,7 @@ function New-HeaderPanel {
     $title.Size      = New-Object System.Drawing.Size(500, 32)
 
     $sub             = New-Object System.Windows.Forms.Label
-    $sub.Text        = "  Ticket: My PC is very slow   |   Computer: $env:COMPUTERNAME   |   User: $env:USERNAME"
+    $sub.Text        = "  Computer: $env:COMPUTERNAME   |   User: $env:USERNAME   |   $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
     $sub.Font        = $Script:Fonts.Small
     $sub.ForeColor   = $Script:Theme.Gray
     $sub.Location    = New-Object System.Drawing.Point(10, 44)

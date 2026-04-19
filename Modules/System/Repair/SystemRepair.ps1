@@ -113,6 +113,11 @@ $Script:Repair_WinUpdate = {
     } catch {
         $Result.Errors.Add("Update installation failed: $_")
         Push-LogMessage -State $State -Message "  Update installation failed: $_" -Type "error"
+    } finally {
+        # Release COM objects — they are apartment-threaded and must not persist
+        # in $State.Results after the workflow runspace completes.
+        $Result.Data["Session"]      = $null
+        $Result.Data["SearchResult"] = $null
     }
 }
 
