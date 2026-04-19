@@ -211,25 +211,39 @@ function Build-ModuleSectionContent {
             return "<table><tr><th>Item</th><th>Value</th><th>Status</th></tr>$rows</table>"
         }
 
-        { $_ -in "SFC /scannow", "DISM RestoreHealth" } {
-            $summary = if ($ex["summary"]) { Escape-Html $ex["summary"] } else { "No summary available." }
-            $log     = if ($ex["logFile"]) { "<p><small>Log: $($ex['logFile'])</small></p>" } else { "" }
-            return "<p>$summary</p>$log"
+        "SFC /scannow" {
+            $summary    = if ($ex["summary"])    { Escape-Html $ex["summary"] } else { "No summary available." }
+            $repaired   = $ex["repaired"] -eq $true
+            $repairNote = if ($ex["repairNote"])  { "<p><small><em>$(Escape-Html $ex['repairNote'])</em></small></p>" } else { "" }
+            $log        = if ($ex["logFile"])     { "<p><small>Log: $(Escape-Html $ex['logFile'])</small></p>" } else { "" }
+            $badge      = if ($repaired) { "<span class='badge badge-ok'>REPAIRED</span>" } else { "" }
+            return "<p>$summary $badge</p>$repairNote$log"
+        }
+
+        "DISM RestoreHealth" {
+            $summary    = if ($ex["summary"])    { Escape-Html $ex["summary"] } else { "No summary available." }
+            $repaired   = $ex["repaired"] -eq $true
+            $repairNote = if ($ex["repairNote"])  { "<p><small><em>$(Escape-Html $ex['repairNote'])</em></small></p>" } else { "" }
+            $log        = if ($ex["logFile"])     { "<p><small>Log: $(Escape-Html $ex['logFile'])</small></p>" } else { "" }
+            $badge      = if ($repaired) { "<span class='badge badge-ok'>REPAIRED</span>" } else { "" }
+            return "<p>$summary $badge</p>$repairNote$log"
         }
 
         "CHKDSK /scan+/spotfix" {
-            $summary = if ($ex["summary"]) { Escape-Html $ex["summary"] } else { "" }
-            $method  = if ($ex["method"])  { "<p><small>Method: $($ex['method'])</small></p>" } else { "" }
-            return "<p>$summary</p>$method"
+            $summary  = if ($ex["summary"])  { Escape-Html $ex["summary"] } else { "" }
+            $repaired = $ex["repaired"] -eq $true
+            $badge    = if ($repaired) { "<span class='badge badge-ok'>REPAIRED</span>" } else { "" }
+            $method   = if ($ex["method"])   { "<p><small>Method: $(Escape-Html $ex['method'])</small></p>" } else { "" }
+            return "<p>$summary $badge</p>$method"
         }
 
         "Clear Temp Files" {
-            $freed = $ex["totalFreedMB"] ?? 0
+            $freed = if ($null -ne $ex["totalFreedMB"]) { $ex["totalFreedMB"] } else { 0 }
             return "<p>Total space freed: <strong>$freed MB</strong></p>"
         }
 
         "Event Viewer" {
-            $count = $ex["count"] ?? 0
+            $count = if ($null -ne $ex["count"]) { $ex["count"] } else { 0 }
             if ($count -eq 0) { return "<p>No critical events found in the last 24 hours.</p>" }
             $rows = if ($ex["rows"]) {
                 ($ex["rows"] | ForEach-Object {
@@ -240,17 +254,19 @@ function Build-ModuleSectionContent {
         }
 
         "Windows Update" {
-            $cnt    = $ex["pendingCount"] ?? 0
-            $reboot = $ex["rebootRequired"] ?? $false
+            $cnt    = if ($null -ne $ex["pendingCount"])  { $ex["pendingCount"]  } else { 0 }
+            $reboot = if ($null -ne $ex["rebootRequired"]) { $ex["rebootRequired"] } else { $false }
+            if ($cnt -eq -1) { return "<p>Could not check Windows Update. Verify manually via Settings.</p>" }
             if ($cnt -eq 0)  { return "<p>System is fully up to date.</p>" }
-            if ($cnt -eq -1) { return "<p>Could not check Windows Update. Check manually via Settings.</p>" }
-            $list   = if ($ex["titles"]) { "<ul>" + (($ex["titles"] | ForEach-Object { "<li>$(Escape-Html $_)</li>" }) -join "") + "</ul>" } else { "" }
-            $rebootNote = if ($reboot) { "<p class='warn'><strong>Reboot required after updates.</strong></p>" } else { "" }
-            return "<p>$cnt updates installed.</p>$list$rebootNote"
+            $installed  = $Result.ActionsTaken.Count -gt 0
+            $statusLine = if ($installed) { "<p>$cnt updates installed.</p>" } else { "<p>$cnt updates pending (not installed — run in SafeRepair or FullRepair mode).</p>" }
+            $list       = if ($ex["titles"]) { "<ul>" + (($ex["titles"] | Select-Object -First 15 | ForEach-Object { "<li>$(Escape-Html $_)</li>" }) -join "") + "</ul>" } else { "" }
+            $rebootNote = if ($reboot) { "<p class='warn'><strong>Reboot required.</strong></p>" } else { "" }
+            return "$statusLine$list$rebootNote"
         }
 
         "Startup Programs" {
-            $count = $ex["count"] ?? 0
+            $count = if ($null -ne $ex["count"]) { $ex["count"] } else { 0 }
             if (-not $ex["items"]) { return "<p>$count startup items found.</p>" }
             $rows = ($ex["items"] | ForEach-Object {
                 "<tr><td>$(Escape-Html $_.Name)</td><td>$(Escape-Html $_.Command)</td><td>$($_.Scope)</td></tr>"
@@ -267,7 +283,7 @@ function Build-ModuleSectionContent {
         }
 
         "RAM Health" {
-            $errCount = $ex["errorCount"] ?? 0
+            $errCount = if ($null -ne $ex["errorCount"]) { $ex["errorCount"] } else { 0 }
             $note = if ($errCount -gt 0) { "<p><strong>Memory Diagnostic has been scheduled for next reboot.</strong></p>" } else { "" }
             if (-not $ex["sticks"]) { return "<p>No RAM module data available.</p>$note" }
             $rows = ($ex["sticks"] | ForEach-Object {

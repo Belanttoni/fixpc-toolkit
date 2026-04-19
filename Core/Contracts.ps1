@@ -249,27 +249,7 @@ function New-ExecutionContext {
     }
 }
 
-# ============================================================
-#  RESULT VALIDATION
-# ============================================================
-function Assert-ValidModuleResult {
-    param([Parameter(Mandatory)][PSCustomObject]$Result)
-
-    $required = @(
-        "ModuleName","Success","ExecutionMode",
-        "StartedAt","FinishedAt","DurationSeconds",
-        "Severity","Findings","Recommendations",
-        "ActionsTaken","Errors","Warnings","Data","ExportData"
-    )
-    foreach ($prop in $required) {
-        if ($null -eq $Result.PSObject.Properties[$prop]) {
-            throw "Module result missing required field: '$prop'"
-        }
-    }
-    if ($Result.Severity -notin $Script:SeverityOrder) {
-        throw "Invalid Severity value: '$($Result.Severity)'"
-    }
-    return $true
-}
+# NOTE: Assert-ValidModuleResult is defined in Core/Validation.ps1 (loaded after this file).
+# It is the canonical result validation function. Do not redefine it here.
 
 Write-Verbose "[Contracts] Loaded. Severity model: $($Script:SeverityOrder -join ' | ')"

@@ -76,16 +76,19 @@ function Write-LogEntry {
         # File
         Add-Content -Path $Script:LogState.LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
 
-        # UI sync buffer (consumed by UI timer on main thread)
+        # UI sync buffer — only Warnings and Errors; routine Info stays in the log file.
+        # Intentional UI messages use Push-LogMessage directly (State.LogBuffer).
+        # Phase step markers are pushed by Write-LogStep via its own direct push.
         if ($null -ne $Script:LogState.SyncBuffer) {
             $uiType = switch ($Level) {
                 ([LogLevel]::Warning)  { "warn"  }
                 ([LogLevel]::Error)    { "error" }
                 ([LogLevel]::Critical) { "error" }
-                ([LogLevel]::Debug)    { "info"  }
-                default                { "normal"}
+                default                { $null   }   # Info/Debug: file only
             }
-            $Script:LogState.SyncBuffer.Log += "[$uiType]$Message`n"
+            if ($null -ne $uiType) {
+                $Script:LogState.SyncBuffer.LogBuffer += "[$uiType]$Message`n"
+            }
         }
     } finally {
         [System.Threading.Monitor]::Exit($Script:LogState.Lock)
@@ -116,7 +119,7 @@ function Write-LogStep {
     Write-LogEntry -Level Info -Source $Source -Message "$numStr=== $StepName ==="
 
     if ($null -ne $Script:LogState.SyncBuffer) {
-        $Script:LogState.SyncBuffer.Log += "[step]$numStr$StepName`n"
+        $Script:LogState.SyncBuffer.LogBuffer += "[step]$numStr$StepName`n"
     }
 }
 

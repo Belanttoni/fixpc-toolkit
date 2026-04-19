@@ -156,7 +156,9 @@ function Invoke-ModuleLifecycle {
         default { " " }
     }
 
-    Write-LogInfo -Source $ModuleId -Message "$statusIcon $ModuleName completed in $timeStr | Status: $uiStatus | Findings: $($Result.Findings.Count)"
+    $logType = switch ($uiStatus) { "ok" { "ok" } "warn" { "warn" } "error" { "error" } default { "info" } }
+    Write-LogInfo  -Source $ModuleId -Message "$statusIcon $ModuleName completed in $timeStr | Status: $uiStatus | Findings: $($Result.Findings.Count)"
+    Push-LogMessage -State $State    -Message "  $statusIcon $ModuleName — $uiStatus ($timeStr) | $($Result.Findings.Count) finding(s)" -Type $logType
 
     return $Result
 }

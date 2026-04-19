@@ -77,7 +77,8 @@ $Script:Export_ChkDsk = {
 # ============================================================
 $Script:Export_Temp = {
     param($Result, $State)
-    $freedMB = [math]::Round(($Result.Data["FreedBytes"] ?? 0) / 1MB, 1)
+    $freedBytes = $Result.Data["FreedBytes"]
+    $freedMB = [math]::Round((if ($null -ne $freedBytes) { $freedBytes } else { 0L }) / 1MB, 1)
     $Result.ExportData["totalFreedMB"] = $freedMB
     $Result.ExportData["summary"]      = "Total space freed: $freedMB MB"
     $Result.ExportData["paths"]        = $Result.Data["PathInventory"].Keys
@@ -113,8 +114,8 @@ $Script:Export_Events = {
 $Script:Export_WinUpdate = {
     param($Result, $State)
     $Result.ExportData["pendingCount"]   = $Result.Data["PendingCount"]
-    $Result.ExportData["titles"]         = $Result.Data["PendingTitles"] ?? @()
-    $Result.ExportData["rebootRequired"] = $Result.Data["RebootRequired"] ?? $false
+    $Result.ExportData["titles"]         = if ($null -ne $Result.Data["PendingTitles"])  { $Result.Data["PendingTitles"]  } else { @()    }
+    $Result.ExportData["rebootRequired"] = if ($null -ne $Result.Data["RebootRequired"]) { $Result.Data["RebootRequired"] } else { $false }
 }
 
 # ============================================================

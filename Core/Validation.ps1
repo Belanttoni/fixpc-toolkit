@@ -119,24 +119,38 @@ function Ensure-DirectoryExists {
 }
 
 # ============================================================
-#  RESULT VALIDATION
+#  RESULT VALIDATION  (canonical — see Core/Contracts.ps1 for schema definition)
 # ============================================================
 function Assert-ValidModuleResult {
     <#
     .SYNOPSIS
-        Validates that a module result conforms to the contract.
+        Validates that a ModuleResult conforms to the New-ModuleResult contract.
         Called by ResultConsolidator before accepting a result.
+        Required fields mirror New-ModuleResult in Contracts.ps1.
     #>
     param([Parameter(Mandatory)][PSCustomObject]$Result)
 
-    $required = @("ModuleName","Success","ExecutionMode","Severity","Findings",
-                  "Recommendations","ActionsTaken","Errors","Warnings","Data","ExportData")
+    $required = @(
+        "ModuleName", "ExecutionMode", "Success",
+        "StartedAt", "FinishedAt", "DurationSeconds",
+        "Severity", "Stage",
+        "Findings", "Recommendations", "ActionsTaken",
+        "Errors", "Warnings",
+        "Data", "ExportData"
+    )
 
     foreach ($prop in $required) {
         if ($null -eq $Result.PSObject.Properties[$prop]) {
-            throw "Module result is missing required property: '$prop'"
+            throw "ModuleResult is missing required field: '$prop'"
         }
     }
+
+    # Severity must be a valid project string value
+    $validSeverities = @("ok", "info", "warn", "error", "critical")
+    if ($Result.Severity -notin $validSeverities) {
+        throw "ModuleResult.Severity is invalid: '$($Result.Severity)'. Must be one of: $($validSeverities -join ', ')"
+    }
+
     return $true
 }
 
