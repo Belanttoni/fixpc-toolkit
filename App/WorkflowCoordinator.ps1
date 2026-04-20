@@ -91,6 +91,7 @@ function Start-DiagnosticWorkflow {
 
         Write-LogInfo -Source "Coordinator" -Message "Starting module: $($modDef.Id) [$stepNum/$totalModules]"
 
+        $result = $null
         try {
             $result = Invoke-ModuleById -ModuleDef $modDef -Context $Context -State $State
 
@@ -105,18 +106,20 @@ function Start-DiagnosticWorkflow {
                         Add-StateWarning -State $State -Warning "$sym [$($modDef.Name)] $($f.Title)"
                     }
                 }
-
-                # Update performance gauges from sysinfo
-                if ($modDef.Id -eq "sysinfo" -and $result.Data.ContainsKey("CpuLoad")) {
-                    $State.CpuLoad  = $result.Data.CpuLoad
-                    $State.RamPct   = $result.Data.RamPct
-                    $State.DiskPct  = $result.Data.DiskPct
-                }
             }
         } catch {
             Write-LogError -Source "Coordinator" -Message "Module '$($modDef.Id)' threw unhandled exception: $_"
             Set-ModuleStatus -State $State -ModuleId $modDef.Id -Status "error"
             Push-LogMessage -State $State -Message "Module $($modDef.Name) failed unexpectedly: $_" -Type "error"
+        }
+
+        # Update performance gauges from sysinfo — kept OUTSIDE the try-catch so
+        # a metrics-extraction failure cannot overwrite the module's real status.
+        # OrderedDictionary uses Contains() not ContainsKey(); keys via bracket notation.
+        if ($modDef.Id -eq "sysinfo" -and $null -ne $result -and $result.Data.Contains("CpuLoad")) {
+            $State.CpuLoad = $result.Data["CpuLoad"]
+            $State.RamPct  = $result.Data["RamPct"]
+            $State.DiskPct = $result.Data["DiskPct"]
         }
     }
 

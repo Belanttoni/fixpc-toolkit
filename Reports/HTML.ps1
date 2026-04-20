@@ -206,9 +206,9 @@ function Build-ModuleSectionContent {
             if (-not $ex["rows"]) { return "<p>No data collected.</p>" }
             $rows = ($ex["rows"] | ForEach-Object {
                 $cls = if ($_.CssClass) { " class='$($_.CssClass)'" } else { "" }
-                "<tr><td>$($_.Item)</td><td>$($_.Value)</td><td$cls>$($_.Status)</td></tr>"
+                "<tr><td>$($_.Label)</td><td>$($_.Value)</td><td$cls>$($_.Status)</td></tr>"
             }) -join ""
-            return "<table><tr><th>Item</th><th>Value</th><th>Status</th></tr>$rows</table>"
+            return "<table><tr><th>Label</th><th>Value</th><th>Status</th></tr>$rows</table>"
         }
 
         "SFC /scannow" {
