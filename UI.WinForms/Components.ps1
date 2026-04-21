@@ -42,7 +42,8 @@ function New-ModuleRow {
     )
 
     $rowH  = 25
-    $col1  = 8;   $col2 = 32;  $col3 = 290; $col4 = 520; $col5 = 655
+    # Column positions — checkbox at far left; dot + name shifted right by 18px to make room.
+    $chkX  = 4;   $col1 = 26;  $col2 = 48;  $col3 = 290; $col4 = 520; $col5 = 655
     $bg    = if ($RowIndex % 2 -eq 0) { $Script:Theme.BgMid } else { $Script:Theme.BgCard }
 
     $row           = New-Object System.Windows.Forms.Panel
@@ -50,17 +51,24 @@ function New-ModuleRow {
     $row.Size      = New-Object System.Drawing.Size(790, $rowH)
     $row.BackColor = $bg
 
+    # ── Selection checkbox ─────────────────────────────────────
+    $chkBox           = New-Object System.Windows.Forms.CheckBox
+    $chkBox.Location  = New-Object System.Drawing.Point($chkX, 4)
+    $chkBox.Size      = New-Object System.Drawing.Size(18, 17)
+    $chkBox.Checked   = $true
+    $chkBox.BackColor = $bg
+
     $dot           = New-Object System.Windows.Forms.Label
     $dot.Text      = "$([char]0x25CF)"
     $dot.Location  = New-Object System.Drawing.Point($col1, 4)
-    $dot.Size      = New-Object System.Drawing.Size(22, 18)
+    $dot.Size      = New-Object System.Drawing.Size(20, 18)
     $dot.ForeColor = $Script:Theme.Gray
     $dot.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
 
     $nameL           = New-Object System.Windows.Forms.Label
     $nameL.Text      = $ModuleDef.Name
     $nameL.Location  = New-Object System.Drawing.Point($col2, 5)
-    $nameL.Size      = New-Object System.Drawing.Size(255, 16)
+    $nameL.Size      = New-Object System.Drawing.Size(238, 16)
     $nameL.Font      = $Script:Fonts.Bold
     $nameL.ForeColor = $Script:Theme.White
 
@@ -85,13 +93,14 @@ function New-ModuleRow {
     $timeL.Font      = $Script:Fonts.Small
     $timeL.ForeColor = $Script:Theme.Gray
 
-    $row.Controls.AddRange(@($dot, $nameL, $descL, $statusL, $timeL))
+    $row.Controls.AddRange(@($chkBox, $dot, $nameL, $descL, $statusL, $timeL))
 
     # Store references for external update
     $id = $ModuleDef.Id
     $LabelStore[$id]           = $statusL
     $LabelStore[$id + "_dot"]  = $dot
     $LabelStore[$id + "_time"] = $timeL
+    $LabelStore[$id + "_chk"]  = $chkBox   # checkbox reference for preset / selection logic
 
     return $row
 }

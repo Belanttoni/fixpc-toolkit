@@ -54,7 +54,10 @@ $Script:Analyze_SysInfo = {
 # ============================================================
 $Script:Analyze_SFC = {
     param($Result, $State)
-    $out = $Result.Data["VerifyOutput"]
+    # sfc.exe writes UTF-16 via the Windows console API; PowerShell captures NUL bytes
+    # (\x00) between every character.  Strip them before pattern matching.
+    $raw = $Result.Data["VerifyOutput"]
+    $out = if ($raw) { ($raw -replace '\x00', '').Trim() } else { "" }
 
     if ($out -match "did not find any integrity violations") {
         $Result.Findings.Add((New-Finding -Title "No Integrity Violations" -Severity "info" `
@@ -84,7 +87,10 @@ $Script:Analyze_SFC = {
 # ============================================================
 $Script:Analyze_DISM = {
     param($Result, $State)
-    $out = $Result.Data["CheckOutput"]
+    # DISM may also produce NUL-interspersed output on some Windows versions.
+    # Strip \x00 before matching so patterns work reliably.
+    $raw = $Result.Data["CheckOutput"]
+    $out = if ($raw) { ($raw -replace '\x00', '').Trim() } else { "" }
 
     if ($out -match "No component store corruption detected") {
         $Result.Findings.Add((New-Finding -Title "Component Store Healthy" -Severity "info" `
@@ -102,6 +108,14 @@ $Script:Analyze_DISM = {
             -Description "DISM /CheckHealth: component store damage detected that cannot be self-repaired. Consider OS repair or in-place upgrade."))
         $Result.Warnings.Add("DISM: component store damage may require OS repair.")
         Push-LogMessage -State $State -Message "  DISM CheckHealth: irreparable damage detected." -Type "error"
+    } elseif ($out -match "operation completed successfully") {
+        # DISM ran and finished cleanly but the standard "no corruption" string was not
+        # present (locale difference or minor phrasing change).  Treat as clean — no
+        # corruption keyword was triggered.
+        $Result.Findings.Add((New-Finding -Title "Component Store Appears Healthy" -Severity "info" `
+            -Description "DISM /CheckHealth completed successfully with no corruption indicators detected."))
+        $Result.Recommendations.Add("Run in SafeRepair mode to execute DISM /ScanHealth for a deeper component store check.")
+        Push-LogMessage -State $State -Message "  DISM CheckHealth: completed successfully, no issues flagged." -Type "ok"
     } else {
         $Result.Findings.Add((New-Finding -Title "DISM CheckHealth Inconclusive" -Severity "warn" `
             -Description "DISM /CheckHealth result could not be determined. Check dism.log for details."))
