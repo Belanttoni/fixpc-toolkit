@@ -90,11 +90,14 @@ function Show-MainForm {
         $pb.FlatAppearance.BorderSize  = 1
         $pb.FlatAppearance.BorderColor = $Script:Theme.Separator
 
-        # Capture loop variable before closure — prevents last-value-only capture
-        $capturedName = $pd.Name
+        # Store the preset name in the button's Tag property so the click handler
+        # can retrieve it without relying on a closure.
+        # DO NOT use .GetNewClosure() here — it creates an isolated module scope
+        # that cannot see script-level functions like Apply-Preset.
+        $pb.Tag = $pd.Name
         $pb.Add_Click({
-            Apply-Preset -PresetName $capturedName -AllModuleDefs $Script:AllModuleDefs
-        }.GetNewClosure())
+            Apply-Preset -PresetName $this.Tag -AllModuleDefs $Script:AllModuleDefs
+        })
 
         $PanelPresets.Controls.Add($pb)
         $Script:PresetBtns[$pd.Name] = $pb
@@ -210,7 +213,7 @@ function Show-MainForm {
         -Text        "  View Report" `
         -Location    (New-Object System.Drawing.Point(392, 671)) `
         -Size        (New-Object System.Drawing.Size(145, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(30, 50, 30) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(30, 50, 30)) `
         -ForeColor   $Script:Theme.Green `
         -BorderColor $Script:Theme.Green `
         -Enabled     $false
@@ -219,7 +222,7 @@ function Show-MainForm {
         -Text        "  JSON" `
         -Location    (New-Object System.Drawing.Point(548, 671)) `
         -Size        (New-Object System.Drawing.Size(80, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(10, 20, 40) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(10, 20, 40)) `
         -ForeColor   $Script:Theme.Accent `
         -BorderColor $Script:Theme.Accent `
         -Enabled     $false
@@ -228,7 +231,7 @@ function Show-MainForm {
         -Text        "X  Exit" `
         -Location    (New-Object System.Drawing.Point(650, 671)) `
         -Size        (New-Object System.Drawing.Size(150, 34)) `
-        -BackColor   [System.Drawing.Color]::FromArgb(40, 15, 20) `
+        -BackColor   ([System.Drawing.Color]::FromArgb(40, 15, 20)) `
         -ForeColor   $Script:Theme.Red `
         -BorderColor $Script:Theme.Red
 

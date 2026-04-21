@@ -15,13 +15,17 @@
 $Script:Export_SysInfo = {
     param($Result, $State)
     $d = $Result.Data
+    $ramClass    = if ($d['RamPct']  -gt 85) { "warn" } else { "ok" }
+    $diskClass   = if ($d['DiskPct'] -gt 85) { "warn" } else { "ok" }
+    $uptimeStatus = if ($d['UptimeDays'] -gt 7) { "warn" } else { "-" }
+
     $Result.ExportData["rows"] = @(
-        @{ Item="OS";      Value="$($d['OS']) Build $($d['Build'])";                                      Status="-"                                                                                          },
-        @{ Item="CPU";     Value=$d['CPU'];                                                                Status="Load: $($d['CpuLoad'])%"                                                                   },
-        @{ Item="RAM";     Value="$($d['RamUsed']) GB / $($d['RamTotal']) GB";                            Status="$($d['RamPct'])%"; CssClass=$(if($d['RamPct'] -gt 85){"warn"}else{"ok"})                    },
-        @{ Item="Disk C:"; Value="$($d['DiskFree']) GB free / $($d['DiskTotal']) GB";                     Status="$($d['DiskPct'])% used"; CssClass=$(if($d['DiskPct'] -gt 85){"warn"}else{"ok"})             },
-        @{ Item="Uptime";  Value=$d['UptimeStr'];                                                          Status=$(if($d['UptimeDays'] -gt 7){"warn"}else{"-"})                                              },
-        @{ Item="BIOS";    Value=$d['BIOS'];                                                               Status="-"                                                                                          }
+        @{ Label="OS";      Value="$($d['OS']) Build $($d['Build'])";              Status="-"                         },
+        @{ Label="CPU";     Value=$d['CPU'];                                        Status="Load: $($d['CpuLoad'])%"   },
+        @{ Label="RAM";     Value="$($d['RamUsed']) GB / $($d['RamTotal']) GB";    Status="$($d['RamPct'])%";    CssClass=$ramClass  },
+        @{ Label="Disk C:"; Value="$($d['DiskFree']) GB free / $($d['DiskTotal']) GB"; Status="$($d['DiskPct'])% used"; CssClass=$diskClass },
+        @{ Label="Uptime";  Value=$d['UptimeStr'];                                 Status=$uptimeStatus               },
+        @{ Label="BIOS";    Value=$d['BIOS'];                                       Status="-"                         }
     )
 }
 
@@ -78,11 +82,15 @@ $Script:Export_ChkDsk = {
 # ============================================================
 $Script:Export_Temp = {
     param($Result, $State)
-    $freedBytes = $Result.Data["FreedBytes"]
-    $freedMB = [math]::Round((if ($null -ne $freedBytes) { $freedBytes } else { 0L }) / 1MB, 1)
+    $freedBytes    = $Result.Data["FreedBytes"]
+    # Pre-compute to avoid placing an `if` statement inside a method-call argument
+    # (statement-in-expression is a PS5.1 syntax error when used bare inside parentheses).
+    $freedBytesVal = if ($null -ne $freedBytes) { [long]$freedBytes } else { 0L }
+    $freedMB       = [math]::Round($freedBytesVal / 1MB, 1)
     $Result.ExportData["totalFreedMB"] = $freedMB
     $Result.ExportData["summary"]      = "Total space freed: $freedMB MB"
-    $Result.ExportData["paths"]        = $Result.Data["PathInventory"].Keys
+    $inventory = $Result.Data["PathInventory"]
+    $Result.ExportData["paths"]        = if ($inventory) { $inventory.Keys } else { @() }
 }
 
 # ============================================================
