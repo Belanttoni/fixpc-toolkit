@@ -296,14 +296,29 @@ function Build-ModuleSectionContent {
             # ── Primary adapter / IP summary ──────────────────
             $adapterLine = ""
             if ($ex["adapterName"]) {
-                $ip      = if ($ex["localIP"])      { $ex["localIP"]                               } else { "—" }
-                $prefix  = if ($ex["prefixLength"]) { "/$($ex['prefixLength'])"                     } else { "" }
-                $gw      = if ($ex["gateway"])      { $ex["gateway"]                               } else { "—" }
-                $dnsStr  = if ($ex["dnsServers"] -and @($ex["dnsServers"]).Count -gt 0) {
-                    (Escape-Html ($ex["dnsServers"] -join ", "))
+                $ip       = if ($ex["localIP"])      { $ex["localIP"]      } else { "—" }
+                $prefix   = if ($ex["prefixLength"]) { "/$($ex['prefixLength'])" } else { "" }
+                $gw       = if ($ex["gateway"])      { $ex["gateway"]      } else { "—" }
+                $dnsStr   = if ($ex["dnsServers"] -and @($ex["dnsServers"]).Count -gt 0) {
+                    Escape-Html ($ex["dnsServers"] -join ", ")
                 } else { "—" }
-                $adapterLine = "<p><strong>Adapter:</strong> $(Escape-Html $ex['adapterName']) &nbsp;|&nbsp; " +
-                               "<strong>IP:</strong> $ip$prefix &nbsp;|&nbsp; " +
+                $dhcpBadge = if ($ex["isDhcp"] -eq $true) {
+                    "&nbsp;<span style='font-size:.8em;color:#7be;'>[DHCP]</span>"
+                } elseif ($ex["isDhcp"] -eq $false -and $ex["localIP"]) {
+                    "&nbsp;<span style='font-size:.8em;color:#aaa;'>[Static]</span>"
+                } else { "" }
+
+                # Adapter type / SSID line
+                $typeLabel = $ex["adapterType"]
+                $ssidNote  = if ($ex["ssid"]) { " &nbsp;|&nbsp; <strong>SSID:</strong> $(Escape-Html $ex['ssid'])" } else { "" }
+                # Badge only on primary-adapter APIPA — non-primary APIPA is informational only
+                $apipaBadge= if ($ex["apipaOnPrimary"] -eq $true) {
+                    "&nbsp;<span style='color:#f80;font-weight:700;'>⚠ APIPA</span>"
+                } else { "" }
+
+                $adapterLine = "<p><strong>Adapter:</strong> $(Escape-Html $ex['adapterName'])" +
+                               "&nbsp;<span style='color:#7be;font-size:.85em;'>[$typeLabel]</span>$ssidNote &nbsp;|&nbsp; " +
+                               "<strong>IP:</strong> $ip$prefix$dhcpBadge$apipaBadge &nbsp;|&nbsp; " +
                                "<strong>Gateway:</strong> $gw &nbsp;|&nbsp; " +
                                "<strong>DNS:</strong> $dnsStr</p>"
             }
@@ -314,24 +329,50 @@ function Build-ModuleSectionContent {
             if ($conn) {
                 $CHK  = "&#10004;"   # ✔
                 $CROS = "&#10006;"   # ✖
+                $SKIP = "&#8212;"    # — (skipped / n/a)
 
-                $rows = @(
-                    @{ Check = "Loopback (127.0.0.1)";  Data = $conn["loopback"] },
-                    @{ Check = "Gateway";                Data = $conn["gateway"]  },
-                    @{ Check = "Internet (8.8.8.8)";    Data = $conn["internet"] },
-                    @{ Check = "DNS Resolution";         Data = $conn["dns"]      }
-                ) | ForEach-Object {
-                    $label  = $_.Check
-                    $item   = $_.Data
+                # Build rows; localIP and port443 use tri-state (true/false/$null)
+                $allRows = @(
+                    @{ Label = "Loopback (127.0.0.1)"; Item = $conn["loopback"]; Tristate = $false },
+                    @{ Label = "Local IP";              Item = $conn["localIP"];  Tristate = $true  },
+                    @{ Label = "Gateway";               Item = $conn["gateway"];  Tristate = $false },
+                    @{ Label = "Internet";              Item = $conn["internet"]; Tristate = $false },
+                    @{ Label = "DNS Resolution";        Item = $conn["dns"];      Tristate = $false },
+                    @{ Label = "TCP Port 443";          Item = $conn["port443"];  Tristate = $true  }
+                )
+
+                $FILT = "&#8505;"   # ℹ  (ICMP filtered / informational)
+
+                $rowsHtml = $allRows | ForEach-Object {
+                    $label    = $_.Label
+                    $item     = $_.Item
+                    $tristate = $_.Tristate
+
+                    # Append target to label when present
                     if ($item -and $item["target"]) { $label += " ($($item['target']))" }
-                    $ok     = if ($item) { $item["ok"] } else { $false }
-                    $detail = if ($item) { Escape-Html $item["detail"] } else { "" }
-                    $cls    = if ($ok) { "ok" } else { "error" }
-                    $sym    = if ($ok) { $CHK } else { $CROS }
-                    "<tr><td>$label</td><td class='$cls'>$sym $(if($ok){'PASS'}else{'FAIL'})</td><td>$detail</td></tr>"
+
+                    $rawOk      = if ($item) { $item["ok"]          } else { $null }
+                    $icmpBl     = if ($item -and $item["icmpBlocked"]) { [bool]$item["icmpBlocked"] } else { $false }
+                    $detail     = if ($item) { Escape-Html $item["detail"] } else { "" }
+
+                    if ($tristate -and $null -eq $rawOk) {
+                        # N/A — skipped (local IP when no IP, port 443 when not tested)
+                        "<tr><td>$label</td><td style='color:#666'>$SKIP N/A</td><td><em>$detail</em></td></tr>"
+                    } elseif ($icmpBl -and [bool]$rawOk) {
+                        # ICMP is filtered but connectivity is confirmed — amber informational row
+                        "<tr><td>$label</td>" +
+                        "<td style='color:#fa0;font-weight:600;'>$FILT OK (ICMP filtered)</td>" +
+                        "<td>$detail</td></tr>"
+                    } else {
+                        $ok  = [bool]$rawOk
+                        $cls = if ($ok) { "ok" } else { "error" }
+                        $sym = if ($ok) { $CHK } else { $CROS }
+                        "<tr><td>$label</td><td class='$cls'>$sym $(if($ok){'PASS'}else{'FAIL'})</td><td>$detail</td></tr>"
+                    }
                 }
-                $matrix = "<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>" +
-                          ($rows -join "") + "</table>"
+                $matrix = "<h4>Connectivity Checks</h4>" +
+                          "<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>" +
+                          ($rowsHtml -join "") + "</table>"
             }
 
             # ── Adapter inventory (all adapters) ──────────────
@@ -345,17 +386,48 @@ function Build-ModuleSectionContent {
                     "<table><tr><th>Name</th><th>Description</th><th>Status</th><th>Speed</th></tr>$aRows</table>"
             }
 
-            # ── Probable cause ────────────────────────────────
-            $cause = if ($ex["probableCause"]) {
-                "<p><strong>Diagnosis:</strong> $(Escape-Html $ex['probableCause'])</p>"
-            } else { "" }
+            # ── Probable cause (structured code + first finding) ──
+            $causeCode = $ex["probableCauseCode"]
+            $cause = ""
+            if ($causeCode -and $causeCode -ne "Healthy") {
+                $causeColor = if ($causeCode -in @("NoAdapter","StackCorrupted")) { "#f55" }
+                              elseif ($causeCode -in @("AdapterDown","NoIP","GatewayUnreachable","NoInternet")) { "#f90" }
+                              else { "#fa0" }
+                $cause = "<p><strong>Root Cause:</strong> <span style='color:${causeColor};font-weight:600'>$(Escape-Html $causeCode)</span></p>"
+            } elseif ($causeCode -eq "Healthy") {
+                $cause = "<p style='color:#4c4'><strong>&#10004; Network fully operational</strong></p>"
+            }
 
-            # ── Reboot notice ─────────────────────────────────
-            $reboot = if ($ex["rebootRequired"] -eq $true) {
-                "<p class='warn'><strong>Reboot required</strong> to complete network stack repairs (Winsock / TCP/IP reset applied).</p>"
-            } else { "" }
+            # ── Repair actions (populated only when Repair phase ran) ─
+            $repairSection = ""
+            $rs = $ex["repairSummary"]
+            if ($rs -and $rs["attempted"] -gt 0) {
+                $CHK2  = "&#10004;"
+                $CROS2 = "&#10006;"
+                $actRows = ($rs["actions"] | ForEach-Object {
+                    $sym2 = if ($_.success) { $CHK2  } else { $CROS2 }
+                    $cls2 = if ($_.success) { "ok"   } else { "warn" }
+                    "<tr class='$cls2'>" +
+                    "<td>$(Escape-Html $_.action)</td>" +
+                    "<td>$(Escape-Html $_.target)</td>" +
+                    "<td>$sym2</td>" +
+                    "<td>$(Escape-Html $_.detail)</td></tr>"
+                }) -join ""
+                $failNote = if ($rs["failed"] -gt 0) { " | Failed: $($rs['failed'])" } else { "" }
+                $rebootNote = if ($ex["rebootRequired"] -eq $true) {
+                    "<p style='color:#fa0;margin-top:6px'><strong>&#9888; Reboot required</strong> to complete network stack repairs (Winsock / TCP/IP reset applied).</p>"
+                } else { "" }
+                $repairSection = "<h4>Repair Actions</h4>" +
+                    "<p style='color:#aaa;font-size:.85em'>Attempted: $($rs['attempted']) | " +
+                    "Succeeded: $($rs['succeeded'])$failNote</p>" +
+                    "<table><tr><th>Action</th><th>Target</th><th>Result</th><th>Detail</th></tr>" +
+                    "$actRows</table>$rebootNote"
+            } elseif ($ex["rebootRequired"] -eq $true) {
+                # Reboot required but no detailed repair summary (legacy path)
+                $repairSection = "<p class='warn'><strong>Reboot required</strong> to complete network stack repairs.</p>"
+            }
 
-            return "$adapterLine$matrix$adapterTable$cause$reboot"
+            return "$adapterLine$matrix$adapterTable$cause$repairSection"
         }
 
         "Hardware Diagnostics" {
@@ -436,7 +508,107 @@ function Build-ModuleSectionContent {
                     $smartRows_html + "</table>"
             }
 
-            return "$summaryLine$hwInfo$diskTable$smartTable"
+            # ── Battery health ────────────────────────────────────
+            $batterySection = ""
+            $bat = $ex["battery"]
+            if ($bat -and $bat["present"]) {
+                $batName      = if ($bat["name"])      { Escape-Html $bat["name"]        } else { "Battery" }
+                $batHealthPct = $bat["healthPct"]
+                $batChargePct = $bat["chargePct"]
+                $batStatus    = if ($bat["status"])    { Escape-Html $bat["status"]      } else { "Unknown" }
+                $batClass     = if ($bat["class"])     { $bat["class"]                   } else { "info" }
+
+                # Health badge shows percentage + classification label (Healthy/Degraded/Poor)
+                $batHealthLabel = if ($bat["healthLabel"]) { $bat["healthLabel"] } else {
+                    if ($null -eq $batHealthPct)     { "Unknown"  }
+                    elseif ($batHealthPct -ge 80)    { "Healthy"  }
+                    elseif ($batHealthPct -ge 60)    { "Degraded" }
+                    else                              { "Poor"     }
+                }
+                $healthCell = if ($null -ne $batHealthPct) {
+                    $hLabel = Escape-Html $batHealthLabel
+                    switch ($batClass) {
+                        "ok"    { "<span class='badge badge-ok'>${batHealthPct}% — $hLabel</span>"    }
+                        "warn"  { "<span class='badge badge-warn'>${batHealthPct}% — $hLabel</span>"  }
+                        "error" { "<span class='badge badge-error'>${batHealthPct}% — $hLabel</span>" }
+                        default { "${batHealthPct}% — $hLabel" }
+                    }
+                } else { "<em>Capacity data not available</em>" }
+
+                $chargeCell = if ($null -ne $batChargePct) { "$batChargePct%" } else { "—" }
+
+                $capNote = ""
+                if ($null -ne $bat["designedMWh"] -and $null -ne $bat["fullMWh"]) {
+                    $dWh = [math]::Round($bat["designedMWh"] / 1000.0, 1)
+                    $fWh = [math]::Round($bat["fullMWh"]     / 1000.0, 1)
+                    $capNote = "<p><small>Capacity: designed $dWh Wh — full charge $fWh Wh</small></p>"
+                }
+
+                $batterySection = "<h4>Battery</h4>" +
+                    "<table><tr><th>Name</th><th>Health</th><th>Charge</th><th>Status</th></tr>" +
+                    "<tr class='$batClass'>" +
+                    "<td>$batName</td><td>$healthCell</td><td>$chargeCell</td><td>$batStatus</td>" +
+                    "</tr></table>$capNote"
+            }
+
+            # ── Sensor readings table ─────────────────────────────
+            $sensorTable   = ""
+            $sensors       = $ex["sensors"]
+            $sensorAvail   = $ex["sensorAvailable"]
+            $sensorSrc     = $ex["sensorSource"]
+
+            $cpuTempAvail = $ex["cpuTempAvailable"]
+            $lhmRunning   = $ex["lhmRunning"]
+            $ohmRunning   = $ex["ohmRunning"]
+
+            if ($sensors -and $sensors.Count -gt 0) {
+                $sensorRows_html = ""
+                foreach ($s in $sensors) {
+                    $cls     = $s["class"]
+                    $valHtml = "<strong>$($s['value'])</strong>"
+                    $badge   = switch ($cls) {
+                        "ok"    { "<span class='badge badge-ok'>Normal</span>"    }
+                        "warn"  { "<span class='badge badge-warn'>Elevated</span>" }
+                        "error" { "<span class='badge badge-error'>High</span>"   }
+                        default { "" }
+                    }
+                    $sensorRows_html += "<tr class='$cls'>" +
+                        "<td>$(Escape-Html $s['name'])</td>" +
+                        "<td>$(Escape-Html $s['source'])</td>" +
+                        "<td>$valHtml</td>" +
+                        "<td>$badge</td>" +
+                        "</tr>"
+                }
+                $srcNote = if ($sensorSrc -eq "acpi_only") {
+                    "<p><small><em>Sensor data from ACPI thermal zones (limited precision). " +
+                    "For detailed CPU, GPU and drive temperatures, install and run " +
+                    "<strong>LibreHardwareMonitor</strong> before scanning.</em></small></p>"
+                } else { "" }
+                # When sensor data exists but CPU temperature specifically is unavailable,
+                # add a non-alarming informational note rather than leaving it unexplained.
+                $cpuNote = if ($cpuTempAvail -eq $false) {
+                    "<p><small><em>CPU temperature: not available — no compatible sensor source detected. " +
+                    "Install and run <strong>LibreHardwareMonitor</strong> as Administrator for CPU temperature monitoring.</em></small></p>"
+                } else { "" }
+                $sensorTable = "<h4>Sensor Readings</h4>$srcNote" +
+                    "<table><tr><th>Sensor</th><th>Source</th><th>Value</th><th>Status</th></tr>" +
+                    $sensorRows_html + "</table>$cpuNote"
+            } elseif ($sensorAvail -eq $false) {
+                # Context-aware message: "run as admin" when monitor is already running,
+                # "install LHM" when no monitor is detected at all.
+                if ($lhmRunning -or $ohmRunning) {
+                    $monName = if ($lhmRunning) { "LibreHardwareMonitor" } else { "OpenHardwareMonitor" }
+                    $sensorTable = "<p><em>${monName} is running but its WMI bridge could not be accessed. " +
+                        "Re-launch <strong>${monName}</strong> as Administrator and run the scan again " +
+                        "to enable temperature monitoring.</em></p>"
+                } else {
+                    $sensorTable = "<p><em>No sensor data available. Install and run " +
+                        "<strong>LibreHardwareMonitor</strong> (free) before scanning for " +
+                        "detailed CPU, GPU, and drive temperature readings.</em></p>"
+                }
+            }
+
+            return "$summaryLine$hwInfo$batterySection$sensorTable$diskTable$smartTable"
         }
 
         default {

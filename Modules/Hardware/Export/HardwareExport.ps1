@@ -5,17 +5,24 @@
     Scriptblock stored as $Script:Export_Hardware.
 
     ExportData keys:
-        summary     — first finding description (null-guarded)
-        cpu         — ordered hashtable: name, cores, logical, loadPct, maxMHz
-        ram         — ordered hashtable: totalGB, usedGB, freeGB, usedPct, stickCount
-        disks       — array of logical disk ordered hashtables per drive
-        physDisks   — array of SMART status ordered hashtables per physical drive
-        bios        — ordered hashtable: vendor, version, date
-        mb          — ordered hashtable: manufacturer, product
-        gpuName     — string (may be $null)
+        summary      — first finding description (null-guarded)
+        cpu          — ordered hashtable: name, cores, logical, loadPct, maxMHz
+        ram          — ordered hashtable: totalGB, usedGB, freeGB, usedPct, stickCount
+        disks        — array of logical disk ordered hashtables per drive
+        physDisks    — array of SMART status ordered hashtables per physical drive
+        bios         — ordered hashtable: vendor, version, date
+        mb           — ordered hashtable: manufacturer, product
+        gpuName      — string (may be $null)
+        battery      — ordered hashtable: present, name, healthPct, chargePct,
+                        status, designedMWh, fullMWh, class
+        sensors      — array of sensor rows: name, source, value, class
+        cpuTempC     — numeric or $null
+        cpuTempSource — string description of which sensor was used
+        sensorSource — "librehrm" | "openhrm" | "acpi_only" | "none"
+        sensorAvailable — bool
         overallClass — "ok" | "warn" | "error" | "critical" — worst finding severity
 
-.VERSION 1.0
+.VERSION 1.1
 #>
 
 $Script:Export_Hardware = {
@@ -132,6 +139,115 @@ $Script:Export_Hardware = {
     #  GPU
     # ============================================================
     $Result.ExportData["gpuName"] = if ($d["GPUName"]) { $d["GPUName"] } else { $null }
+
+    # ============================================================
+    #  BATTERY
+    # ============================================================
+    $batHealthPct = $d["BatteryHealthPct"]
+    $batClass     = if ($null -ne $batHealthPct) {
+        if     ($batHealthPct -lt 60) { "error" }
+        elseif ($batHealthPct -lt 80) { "warn"  }
+        else                           { "ok"    }
+    } else { "info" }
+
+    # Human-readable health classification (used by HTML for clear labelling)
+    $batHealthLabel = if ($null -eq $batHealthPct) { "Unknown" }
+                      elseif ($batHealthPct -ge 80) { "Healthy"  }
+                      elseif ($batHealthPct -ge 60) { "Degraded" }
+                      else                           { "Poor"     }
+
+    $Result.ExportData["battery"] = [ordered]@{
+        present      = if ($d["BatteryPresent"])     { $true  } else { $false }
+        name         = if ($d["BatteryName"])         { $d["BatteryName"]         } else { $null }
+        healthPct    = $batHealthPct
+        healthLabel  = $batHealthLabel
+        chargePct    = $d["BatteryChargePct"]
+        status       = if ($d["BatteryStatus"])       { $d["BatteryStatus"]       } else { $null }
+        designedMWh  = if ($d["BatteryDesignedMWh"])  { $d["BatteryDesignedMWh"]  } else { $null }
+        fullMWh      = if ($d["BatteryFullMWh"])      { $d["BatteryFullMWh"]      } else { $null }
+        class        = $batClass
+    }
+
+    # ============================================================
+    #  SENSOR READINGS  (temperatures + fan speeds)
+    #  Consumed by HTML/TXT/JSON reports.
+    #  Rows are ordered: OHM/LHM temps first, then ACPI, then drives, then fans.
+    # ============================================================
+    $sensorRows = [System.Collections.Generic.List[object]]::new()
+
+    $ohmTemps    = $d["OhmTemps"]
+    $acpiTemps   = $d["AcpiTemps"]
+    $driveTemps  = $d["DriveTemps"]
+    $ohmFans     = $d["OhmFans"]
+    $ohmNs       = $d["OhmNamespace"]
+    $ohmSrcLabel = if ($ohmNs) { $ohmNs.Split('\')[-1] } else { "" }
+
+    # OHM/LHM temperature sensors
+    if ($ohmTemps -and $ohmTemps.Count -gt 0) {
+        foreach ($s in $ohmTemps) {
+            $tc    = $s["TempC"]
+            $class = if ($tc -ge 85) { "error" } elseif ($tc -ge 75) { "warn" } else { "ok" }
+            $hwCtx = if ($s["HardwareName"]) { " ($($s['HardwareName']))" } else { "" }
+            $sensorRows.Add([ordered]@{
+                name   = "$($s['Name'])$hwCtx"
+                source = $ohmSrcLabel
+                value  = "${tc} °C"
+                class  = $class
+            })
+        }
+    } elseif ($acpiTemps -and $acpiTemps.Count -gt 0) {
+        # Fall back to ACPI zones only when OHM/LHM data is unavailable
+        foreach ($a in $acpiTemps) {
+            $tc    = $a["TempC"]
+            $class = if ($tc -ge 85) { "error" } elseif ($tc -ge 75) { "warn" } else { "ok" }
+            $sensorRows.Add([ordered]@{
+                name   = $a["Name"]
+                source = "ACPI"
+                value  = "${tc} °C"
+                class  = $class
+            })
+        }
+    }
+
+    # Drive temperatures
+    if ($driveTemps -and $driveTemps.Count -gt 0) {
+        foreach ($dt in $driveTemps) {
+            if ($null -eq $dt["TempC"]) { continue }
+            $tc    = $dt["TempC"]
+            $class = if ($tc -ge 70) { "error" } elseif ($tc -ge 60) { "warn" } else { "ok" }
+            $sensorRows.Add([ordered]@{
+                name   = "$($dt['Name']) Temperature"
+                source = "Storage"
+                value  = "${tc} °C"
+                class  = $class
+            })
+        }
+    }
+
+    # Fan speeds (OHM/LHM only)
+    if ($ohmFans -and $ohmFans.Count -gt 0) {
+        foreach ($fan in $ohmFans) {
+            $rpm   = $fan["RPM"]
+            $class = if ($rpm -gt 0 -and $rpm -lt 200) { "warn" } else { "ok" }
+            $hwCtx = if ($fan["HardwareName"]) { " ($($fan['HardwareName']))" } else { "" }
+            $sensorRows.Add([ordered]@{
+                name   = "$($fan['Name'])$hwCtx"
+                source = "Fan"
+                value  = "${rpm} RPM"
+                class  = $class
+            })
+        }
+    }
+
+    $Result.ExportData["sensors"]          = $sensorRows.ToArray()
+    $Result.ExportData["cpuTempC"]         = $d["CpuTempC"]
+    $Result.ExportData["cpuTempSource"]    = $d["CpuTempSource"]
+    $Result.ExportData["cpuTempAvailable"] = $null -ne $d["CpuTempC"]
+    $Result.ExportData["sensorSource"]     = $d["SensorSource"]
+    $Result.ExportData["sensorAvailable"]  = $d["SensorAvailable"]
+    # Monitor-running flags — used by HTML to choose between "install LHM" and "run as admin"
+    $Result.ExportData["lhmRunning"]       = [bool]$d["LhmRunning"]
+    $Result.ExportData["ohmRunning"]       = [bool]$d["OhmRunning"]
 
     # ============================================================
     #  OVERALL CLASS  (worst severity across all findings)
