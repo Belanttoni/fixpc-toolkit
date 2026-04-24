@@ -9,8 +9,10 @@
         2. RAM usage — high usage warning
         3. Logical disks — low space per drive (all fixed disks)
         4. Physical disks — SMART health (Unhealthy / Warning)
-        5. Hardware info completeness — flags if critical WMI data is missing
-        6. Overall — healthy summary if no issues found
+        5. Battery — health/degradation (laptops only; skipped on desktops)
+        6. Sensors — CPU/drive temps, fan speeds, LHM no-match diagnostic
+        7. Hardware info completeness — flags if critical WMI data is missing
+        8. Overall — healthy summary if no issues found
 
     Thresholds:
         Disk used: > 90% = critical | > 80% = error | > 70% = warn
@@ -99,13 +101,13 @@ $Script:Analyze_Hardware = {
                 $Result.Findings.Add((New-Finding -Title "Critical: Drive $drive$label Almost Full" -Severity $sev `
                     -Description "$drive is $usedPct% used — only $freeGB GB free of $totalGB GB. System stability is at risk."))
                 $Result.Warnings.Add("Drive $drive is $usedPct% full ($freeGB GB free) — critical space shortage.")
-                $Result.Recommendations.Add("Immediately free space on $drive: run Temp Cleanup, empty Recycle Bin, or extend the volume.")
+                $Result.Recommendations.Add("Immediately free space on drive ${drive} — run Temp Cleanup, empty Recycle Bin, or extend the volume.")
                 Push-LogMessage -State $State -Message "  CRITICAL: $drive$label $usedPct% full — $freeGB GB free" -Type "error"
             } elseif ($usedPct -gt 80 -or $freeGB -lt 8) {
                 $Result.Findings.Add((New-Finding -Title "Low Disk Space on $drive$label" -Severity "error" `
                     -Description "$drive is $usedPct% used — $freeGB GB free of $totalGB GB."))
                 $Result.Warnings.Add("Drive $drive is $usedPct% full ($freeGB GB free).")
-                $Result.Recommendations.Add("Free space on $drive: clean temp files, empty Recycle Bin, or move data.")
+                $Result.Recommendations.Add("Free space on drive ${drive} — clean temp files, empty Recycle Bin, or move data.")
                 Push-LogMessage -State $State -Message "  ERROR: $drive$label $usedPct% used — $freeGB GB free" -Type "error"
             } elseif ($usedPct -gt 70 -or $freeGB -lt 15) {
                 $Result.Findings.Add((New-Finding -Title "Disk Space Warning on $drive$label" -Severity "warn" `
@@ -113,7 +115,7 @@ $Script:Analyze_Hardware = {
                 $Result.Recommendations.Add("Monitor disk space on $drive and consider cleanup soon.")
                 Push-LogMessage -State $State -Message "  WARN: $drive$label $usedPct% used — $freeGB GB free" -Type "warn"
             } else {
-                Push-LogMessage -State $State -Message "  Disk $drive$label: $usedPct% used — $freeGB GB free of $totalGB GB" -Type "ok"
+                Push-LogMessage -State $State -Message "  Disk ${drive}${label}: $usedPct% used — $freeGB GB free of $totalGB GB" -Type "ok"
             }
         }
     }
@@ -156,6 +158,52 @@ $Script:Analyze_Hardware = {
     }
 
     # ============================================================
+    #  BATTERY HEALTH
+    #  Only generates findings on laptops/devices with a battery.
+    #  Desktops and AC-only systems are silently skipped (info log only).
+    #
+    #  Thresholds:
+    #    Health < 60% = error  (severely degraded — consider replacement)
+    #    Health < 80% = warn   (degraded — battery life reduced)
+    #    Health >= 80% = ok    (normal degradation for age)
+    # ============================================================
+    $batPresent   = $d["BatteryPresent"]
+    $batHealthPct = $d["BatteryHealthPct"]
+    $batChargePct = $d["BatteryChargePct"]
+    $batStatus    = $d["BatteryStatus"]
+    $batName      = if ($d["BatteryName"]) { $d["BatteryName"] } else { "Battery" }
+
+    if ($batPresent) {
+        if ($null -ne $batHealthPct) {
+            if ($batHealthPct -lt 60) {
+                $Result.Findings.Add((New-Finding -Title "Battery Severely Degraded" -Severity "error" `
+                    -Description "Battery '$batName' retains only $batHealthPct% of its original designed capacity. The battery will not hold adequate charge and should be replaced."))
+                $Result.Warnings.Add("Battery capacity critically low: $batHealthPct% of designed capacity.")
+                $Result.Recommendations.Add("Replace '$batName'. Battery degradation at this level means severely reduced run time and potential sudden power loss.")
+                Push-LogMessage -State $State -Message "  ERROR: Battery '$batName' health $batHealthPct% — replacement recommended." -Type "error"
+            } elseif ($batHealthPct -lt 80) {
+                $Result.Findings.Add((New-Finding -Title "Battery Degraded" -Severity "warn" `
+                    -Description "Battery '$batName' retains $batHealthPct% of its original designed capacity. Battery run time is noticeably reduced from when the device was new."))
+                $Result.Recommendations.Add("Monitor battery health. Consider replacement if portable run time has become inadequate for your usage.")
+                Push-LogMessage -State $State -Message "  WARN: Battery '$batName' health $batHealthPct%." -Type "warn"
+            } else {
+                $cStr = if ($null -ne $batChargePct) { " | Charge: $batChargePct%" } else { "" }
+                Push-LogMessage -State $State `
+                    -Message "  Battery '$batName': Health $batHealthPct%$cStr | $batStatus" `
+                    -Type "ok"
+            }
+        } else {
+            # Battery present but capacity data not available
+            $cStr = if ($null -ne $batChargePct) { " | Charge: $batChargePct%" } else { "" }
+            Push-LogMessage -State $State `
+                -Message "  Battery '$batName': health data unavailable$cStr | $batStatus" `
+                -Type "info"
+        }
+    } else {
+        Push-LogMessage -State $State -Message "  Battery: not detected (desktop or AC-only)." -Type "info"
+    }
+
+    # ============================================================
     #  HARDWARE INFO COMPLETENESS
     # ============================================================
     $missingItems = @()
@@ -168,9 +216,141 @@ $Script:Analyze_Hardware = {
     }
 
     # ============================================================
-    #  OVERALL HEALTHY SUMMARY
+    #  SENSOR DATA — TEMPERATURES & FAN SPEEDS
     # ============================================================
-    if ($Result.Findings.Count -eq 0) {
+    $sensorAvailable = $d["SensorAvailable"]
+    $cpuTempC        = $d["CpuTempC"]
+    $cpuTempSource   = $d["CpuTempSource"]
+    $driveTemps      = $d["DriveTemps"]
+    $ohmFans         = $d["OhmFans"]
+    $sensorSource    = $d["SensorSource"]
+    $lhmRunning      = [bool]$d["LhmRunning"]
+    $ohmRunning      = [bool]$d["OhmRunning"]
+    $anyMonitorRunning = $lhmRunning -or $ohmRunning
+
+    # ── LHM/OHM present but no CPU sensor matched ────────────
+    if ($d["CpuTempLhmNoMatch"]) {
+        $srcLabel   = if ($sensorSource) { $sensorSource } else { "sensor monitor" }
+        $seenList   = if ($d["CpuTempLhmSensors"]) { " Sensors seen: $($d['CpuTempLhmSensors'])." } else { "" }
+        $Result.Findings.Add((New-Finding -Title "CPU Temperature Sensor Not Matched" -Severity "info" `
+            -Description "$srcLabel is running but no CPU-specific temperature sensor could be identified from the available sensors.$seenList This may indicate an unsupported CPU model or non-standard sensor naming. Check the log for the full sensor list."))
+        Push-LogMessage -State $State `
+            -Message "  INFO: LHM/OHM running but no CPU temp sensor was matched by any priority rule." `
+            -Type "info"
+    }
+
+    if ($sensorAvailable) {
+
+        # ── CPU Temperature ───────────────────────────────────
+        if ($null -ne $cpuTempC) {
+            if ($cpuTempC -ge 95) {
+                $Result.Findings.Add((New-Finding -Title "Critical CPU Temperature" -Severity "critical" `
+                    -Description "CPU temperature is ${cpuTempC}°C ($cpuTempSource). Critical thermal condition — throttling or emergency shutdown is imminent."))
+                $Result.Warnings.Add("CPU temperature CRITICAL at ${cpuTempC}°C — thermal shutdown risk.")
+                $Result.Recommendations.Add("Power off immediately if temperature does not drop. Inspect CPU cooler, thermal paste, and case airflow before restarting.")
+                Push-LogMessage -State $State -Message "  CRITICAL: CPU temp ${cpuTempC}°C ($cpuTempSource)" -Type "error"
+            } elseif ($cpuTempC -ge 85) {
+                $Result.Findings.Add((New-Finding -Title "High CPU Temperature" -Severity "error" `
+                    -Description "CPU temperature is ${cpuTempC}°C ($cpuTempSource). Sustained high temperature accelerates hardware ageing and risks instability."))
+                $Result.Warnings.Add("CPU temperature elevated at ${cpuTempC}°C.")
+                $Result.Recommendations.Add("Check CPU cooler mounting, thermal paste condition, and case airflow. Clean dust from heatsink fins and fan.")
+                Push-LogMessage -State $State -Message "  ERROR: CPU temp ${cpuTempC}°C ($cpuTempSource)" -Type "error"
+            } elseif ($cpuTempC -ge 75) {
+                $Result.Findings.Add((New-Finding -Title "Elevated CPU Temperature" -Severity "warn" `
+                    -Description "CPU temperature is ${cpuTempC}°C ($cpuTempSource). Within operating range but elevated under current load."))
+                $Result.Recommendations.Add("Ensure adequate case airflow. Consider cleaning dust from CPU heatsink if temperature is consistently in this range.")
+                Push-LogMessage -State $State -Message "  WARN: CPU temp ${cpuTempC}°C" -Type "warn"
+            } else {
+                Push-LogMessage -State $State -Message "  CPU temp: ${cpuTempC}°C ($cpuTempSource)" -Type "ok"
+            }
+        } elseif (-not $d["CpuTempLhmNoMatch"]) {
+            # Sensor data is available (drive temps, ACPI) but CPU temperature was not captured.
+            # This is informational only — not a hardware fault.  A separate finding is only
+            # generated if LHM was running but no CPU sensor name matched (CpuTempLhmNoMatch).
+            Push-LogMessage -State $State `
+                -Message "  CPU temperature: not available — no sensor source provided CPU data." `
+                -Type "info"
+        }
+
+        # ── Drive Temperatures ────────────────────────────────
+        if ($driveTemps -and $driveTemps.Count -gt 0) {
+            foreach ($dt in $driveTemps) {
+                if ($null -eq $dt["TempC"]) { continue }
+                $dName = $dt["Name"]
+                $dTemp = $dt["TempC"]
+                if ($dTemp -ge 70) {
+                    $Result.Findings.Add((New-Finding -Title "Critical Drive Temperature: $dName" -Severity "critical" `
+                        -Description "Drive '$dName' is at ${dTemp}°C. Above safe operating range for NAND flash — risk of data corruption or loss."))
+                    $Result.Warnings.Add("Drive '$dName' temperature CRITICAL at ${dTemp}°C.")
+                    $Result.Recommendations.Add("Ensure '$dName' has direct airflow. If temperature does not drop, consider relocating or replacing the drive.")
+                    Push-LogMessage -State $State -Message "  CRITICAL: $dName temp ${dTemp}°C" -Type "error"
+                } elseif ($dTemp -ge 60) {
+                    $Result.Findings.Add((New-Finding -Title "High Drive Temperature: $dName" -Severity "warn" `
+                        -Description "Drive '$dName' is at ${dTemp}°C. Elevated — NAND flash longevity is reduced above 60°C sustained."))
+                    $Result.Recommendations.Add("Improve airflow over '$dName'. Ensure a case fan is directing air toward the drive bay.")
+                    Push-LogMessage -State $State -Message "  WARN: $dName temp ${dTemp}°C" -Type "warn"
+                } else {
+                    Push-LogMessage -State $State -Message "  Drive temp ($dName): ${dTemp}°C" -Type "ok"
+                }
+            }
+        }
+
+        # ── Fan Speeds (OHM/LHM only) ─────────────────────────
+        if ($ohmFans -and $ohmFans.Count -gt 0) {
+            foreach ($fan in $ohmFans) {
+                $rpm = $fan["RPM"]
+                if ($rpm -gt 0 -and $rpm -lt 200) {
+                    $Result.Findings.Add((New-Finding -Title "Low Fan Speed: $($fan['Name'])" -Severity "warn" `
+                        -Description "Fan '$($fan['Name'])' is running at only ${rpm} RPM. May indicate a failing or disconnected fan."))
+                    $Result.Warnings.Add("Fan '$($fan['Name'])' is running very slowly (${rpm} RPM).")
+                    Push-LogMessage -State $State -Message "  WARN: $($fan['Name']) fan ${rpm} RPM" -Type "warn"
+                } elseif ($rpm -gt 0) {
+                    Push-LogMessage -State $State -Message "  Fan: $($fan['Name']) — ${rpm} RPM" -Type "ok"
+                }
+            }
+        }
+
+        # ── Source quality note ───────────────────────────────
+        if ($sensorSource -eq "acpi_only") {
+            Push-LogMessage -State $State `
+                -Message "  INFO: Sensor data from ACPI thermal zones only (limited precision). Install LibreHardwareMonitor for detailed readings." `
+                -Type "info"
+        }
+
+    } else {
+        # No sensor data — advisory message depends on whether a monitor is running.
+        # If LHM/OHM is running but the WMI bridge is unavailable the cause is almost
+        # always a privileges issue; the fix is to re-launch as Administrator, not to
+        # install.  Distinguish clearly so the technician takes the right action.
+        if ($anyMonitorRunning) {
+            $monitorName = if ($lhmRunning) { "LibreHardwareMonitor" } else { "OpenHardwareMonitor" }
+            $Result.Findings.Add((New-Finding -Title "Temperature Sensor Data Unavailable" -Severity "info" `
+                -Description "${monitorName} is running but its WMI sensor bridge could not be accessed. This is typically caused by insufficient privileges — the WMI provider requires Administrator rights to register. Re-launch ${monitorName} as Administrator and run the scan again."))
+            $Result.Recommendations.Add("Right-click ${monitorName} and choose 'Run as administrator', then re-run the Hardware scan.")
+            Push-LogMessage -State $State `
+                -Message "  INFO: ${monitorName} running but WMI bridge unavailable — re-launch as Administrator." `
+                -Type "info"
+        } else {
+            $Result.Findings.Add((New-Finding -Title "Temperature Sensor Data Unavailable" -Severity "info" `
+                -Description "No temperature or fan sensor data could be retrieved. ACPI thermal zones returned no readable data. For detailed CPU, GPU, and drive temperatures install LibreHardwareMonitor (free, open-source) and ensure it is running before scanning."))
+            $Result.Recommendations.Add("Install LibreHardwareMonitor (https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) for CPU, GPU, and drive temperature monitoring.")
+            Push-LogMessage -State $State `
+                -Message "  INFO: No sensor data available — install LibreHardwareMonitor for temperature monitoring." `
+                -Type "info"
+        }
+    }
+
+    # ============================================================
+    #  OVERALL HEALTHY SUMMARY
+    #  Only warn/error/critical findings indicate a real hardware problem.
+    #  Info-severity findings (sensor tips, LHM notes) are informational
+    #  context and must not prevent the "Hardware Healthy" summary from
+    #  appearing when the hardware itself is in good condition.
+    # ============================================================
+    $actionableFindings = @($Result.Findings | Where-Object {
+        $_.Severity -notin @("ok", "info")
+    })
+    if ($actionableFindings.Count -eq 0) {
         $summary = "CPU, RAM, and all disks are within healthy parameters."
         if ($d["CpuName"])    { $summary += " CPU: $($d['CpuName'])." }
         if ($d["RamTotalMB"]) { $summary += " RAM: $($d['RamTotalMB']) MB total, $($d['RamUsedPct'])% used." }

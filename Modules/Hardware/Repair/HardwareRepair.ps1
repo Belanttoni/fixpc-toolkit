@@ -33,17 +33,29 @@ $Script:Repair_Hardware = {
     # Generate one advisory ActionsTaken record per actionable finding.
     # Findings with severity warn/error/critical produce a concrete recommendation.
     $advisoryMap = @{
-        "SMART FAILURE"       = "URGENT: Back up all data immediately and replace the failing drive. Do not delay."
-        "SMART Warning"       = "Back up all data from this drive and plan replacement. Monitor health daily."
-        "Critical: Drive"     = "Immediately free space: run Temp Cleanup, uninstall unused software, or extend the volume."
-        "Low Disk Space"      = "Free space: clean temp files (run Temp Cleanup module), empty Recycle Bin, or remove unused applications."
-        "Disk Space Warning"  = "Monitor disk space and schedule a cleanup. Aim to keep drives below 70% usage."
-        "Critical RAM Usage"  = "Close unused applications now. If persistent, consider upgrading installed RAM."
-        "High RAM Usage"      = "Close unused background applications. Check Task Manager > Processes sorted by Memory."
-        "High CPU Load"       = "Open Task Manager > Processes sorted by CPU. Identify and address high-load processes."
-        "CPU Information"     = "Check Device Manager for CPU driver errors. Run a Windows repair scan (SFC module)."
-        "RAM Usage Data"      = "Run the SFC and DISM modules to check OS integrity. Verify WMI service is running."
-        "Disk Inventory"      = "Run chkdsk (CHKDSK module) and verify disk drivers are healthy in Device Manager."
+        "SMART FAILURE"                      = "URGENT: Back up all data immediately and replace the failing drive. Do not delay."
+        "SMART Warning"                      = "Back up all data from this drive and plan replacement. Monitor health daily."
+        "Critical: Drive"                    = "Immediately free space: run Temp Cleanup, uninstall unused software, or extend the volume."
+        "Low Disk Space"                     = "Free space: clean temp files (run Temp Cleanup module), empty Recycle Bin, or remove unused applications."
+        "Disk Space Warning"                 = "Monitor disk space and schedule a cleanup. Aim to keep drives below 70% usage."
+        "Critical RAM Usage"                 = "Close unused applications now. If persistent, consider upgrading installed RAM."
+        "High RAM Usage"                     = "Close unused background applications. Check Task Manager > Processes sorted by Memory."
+        "High CPU Load"                      = "Open Task Manager > Processes sorted by CPU. Identify and address high-load processes."
+        "CPU Information"                    = "Check Device Manager for CPU driver errors. Run a Windows repair scan (SFC module)."
+        "RAM Usage Data"                     = "Run the SFC and DISM modules to check OS integrity. Verify WMI service is running."
+        "Disk Inventory"                     = "Run chkdsk (CHKDSK module) and verify disk drivers are healthy in Device Manager."
+        # Temperature advisories
+        "Critical CPU Temperature"           = "Power off and allow the system to cool. Inspect CPU cooler mounting pressure, thermal paste condition, and case airflow before restarting. Clean dust from heatsink and fan."
+        "High CPU Temperature"               = "Check CPU cooler seating and thermal paste (replace if over 3–4 years old). Ensure case fans are working and that airflow paths are unobstructed."
+        "Elevated CPU Temperature"           = "Clean dust from CPU heatsink fins and fan. Verify the CPU cooler fan is spinning at rated speed. Consider adding a case exhaust fan."
+        "Critical Drive Temperature"         = "Ensure the drive has direct airflow from a case fan. If temperature does not improve, consider relocating or replacing the drive."
+        "High Drive Temperature"             = "Improve airflow across storage drives. Check that a case fan is directed toward the drive bay."
+        "Low Fan Speed"                      = "Check that the fan cable is firmly seated. Inspect fan blades for obstructions. Replace fan if consistently below rated RPM."
+        "Temperature Sensor Data"            = "Install LibreHardwareMonitor (free, https://github.com/LibreHardwareMonitor) for detailed CPU, GPU, and drive temperature monitoring."
+        "CPU Temperature Sensor Not Matched" = "Open LibreHardwareMonitor and confirm that CPU temperature sensors are listed and showing valid values. Ensure LHM is running with Administrator rights. If sensors still do not appear, check for LHM updates that add support for your CPU model."
+        # Battery advisories
+        "Battery Severely Degraded"          = "Replace the battery as soon as practical. A battery retaining less than 60% capacity risks sudden power loss. Contact your device manufacturer or a reputable repair shop for a compatible replacement."
+        "Battery Degraded"                   = "Monitor battery run time. If portable use is important, plan for battery replacement. Look up the battery model for your device and obtain a replacement from the manufacturer or a trusted supplier."
     }
 
     $advisoriesAdded = 0

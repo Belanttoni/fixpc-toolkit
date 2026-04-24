@@ -42,7 +42,7 @@ function Invoke-HardwareSubmodule {
     switch ($ModuleId) {
         "hardware" { return Invoke-HardwareDiagnostic -Context $Context -State $State }
         default {
-            Write-LogWarning -Context $Context `
+            Write-LogWarning -Source "HardwareModule" `
                 -Message "HardwareModule: unknown module id '$ModuleId' — skipping."
             return $null
         }
@@ -58,10 +58,27 @@ function Invoke-HardwareDiagnostic {
         [Parameter(Mandatory)] [hashtable]    $State
     )
 
+    # Guard: if any stage scriptblock is null a stage file failed to dot-source.
+    # Give a precise diagnostic rather than PowerShell's generic parameter error.
+    $stageCheck = @{
+        "CollectBlock (HardwareCollect.ps1)"  = $Script:Collect_Hardware
+        "AnalyzeBlock (HardwareAnalyze.ps1)"  = $Script:Analyze_Hardware
+        "ExportBlock  (HardwareExport.ps1)"   = $Script:Export_Hardware
+    }
+    foreach ($label in $stageCheck.Keys) {
+        if ($null -eq $stageCheck[$label]) {
+            $msg = "Hardware module stage file failed to load: $label is null. " +
+                   "Check for parse errors in Modules\Hardware\."
+            Write-LogError -Source "HardwareModule" -Message $msg
+            Push-LogMessage -State $State -Message $msg -Type "error"
+            return $null
+        }
+    }
+
     return Invoke-ModuleLifecycle `
         -ModuleId       "hardware" `
         -ModuleName     "Hardware Diagnostics" `
-        -Context        $Context `
+        -ExecutionMode  $Context.Mode `
         -State          $State `
         -CollectBlock   $Script:Collect_Hardware `
         -AnalyzeBlock   $Script:Analyze_Hardware `
