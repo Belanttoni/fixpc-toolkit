@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      net8.0 recommended: ships with System.Text.Json and modern LHM support.
+      To target .NET Framework (always available on Windows 10+, no runtime install
+      needed), change to: net472
+      and add: <PackageReference Include="Newtonsoft.Json" Version="13.*" />
+      then update Program.cs to use Newtonsoft.Json.JsonConvert instead.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>FixPC.SensorBridge</AssemblyName>
+    <RootNamespace>FixPC.SensorBridge</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Optimize>true</Optimize>
+    <!--
+      Publishing as a single-file self-contained executable removes the .NET
+      runtime dependency on the target machine.  Uncomment these if needed:
+      <PublishSingleFile>true</PublishSingleFile>
+      <SelfContained>true</SelfContained>
+      <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      LibreHardwareMonitorLib provides the sensor API.
+      NuGet resolves and copies all required DLLs to the output directory,
+      so the .NET runtime finds them automatically when the EXE runs.
+    -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.*" />
+  </ItemGroup>
+
+</Project>

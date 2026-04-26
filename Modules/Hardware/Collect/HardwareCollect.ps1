@@ -165,208 +165,333 @@ $Script:Collect_Hardware = {
         -Message "  ACPI thermal zones: $($acpiTemps.Count)" -Type "info"
 
     # ============================================================
-    #  SENSOR DATA — TIER 2: LibreHardwareMonitor / OpenHardwareMonitor WMI bridge
-    #
-    #  Detection strategy (two-path, fully logged):
-    #
-    #    1. Check whether LHM/OHM processes are running.  This informs advisory
-    #       messages but does NOT gate the WMI queries — the process may run under
-    #       a different session and the provider may still be registered.
-    #
-    #    2. For each namespace, attempt Get-CimInstance (WS-Management / WinRM).
-    #       Use -ErrorAction Stop so exceptions surface in catch — SilentlyContinue
-    #       would swallow them and make null indistinguishable from an empty result.
-    #
-    #    3. If CimInstance fails or returns 0 sensors, attempt Get-WmiObject (DCOM).
-    #       DCOM and WS-Man use different protocol stacks; some dynamic WMI providers
-    #       (including LHM on certain Windows configurations) are reachable via DCOM
-    #       when WS-Man cannot access them.
-    #
-    #    4. The __NAMESPACE list is checked for diagnostics only — it is NOT a gate.
-    #       Dynamic WMI providers like LHM may not appear in __NAMESPACE enumeration
-    #       even when the namespace is fully accessible.  Skipping based on that list
-    #       was the original source of false-negative "not detected" results.
-    #
-    #    5. Sensor type filtering is always done in PowerShell (never via WQL filter),
-    #       because the LHM WMI bridge does not reliably honour WQL predicates.
-    #
-    #  Failure modes logged distinctly:
-    #    • process running, both paths failed → WMI bridge needs elevated privileges
-    #    • CimInstance failed, WmiObject OK   → DCOM path used, WS-Man not accessible
-    #    • both paths 0 sensors               → LHM may still be initialising
-    #    • sensors found, no CPU match        → full sensor name dump logged
+    #  SENSOR DATA — shared sensor collections used by all tiers
     # ============================================================
     $ohmTemps        = [System.Collections.Generic.List[object]]::new()
     $ohmFans         = [System.Collections.Generic.List[object]]::new()
     $ohmNamespace    = $null
     $ohmLevelSensors = @()
 
-    # --- Process discovery -------------------------------------------------
-    $lhmProc = $null
-    $ohmProc = $null
-    try { $lhmProc = Get-Process -Name "LibreHardwareMonitor" -ErrorAction SilentlyContinue } catch { }
-    try { $ohmProc = Get-Process -Name "OpenHardwareMonitor"  -ErrorAction SilentlyContinue } catch { }
+    # Process-running flags (always checked regardless of which tier succeeds)
+    $lhmRunning = $false
+    $ohmRunning = $false
 
-    $lhmRunning = [bool]$lhmProc
-    $ohmRunning = [bool]$ohmProc
+    # ============================================================
+    #  SENSOR TIER 0: SensorBridge external helper
+    #
+    #  FixPC.SensorBridge.exe is a prebuilt .NET console app that reads
+    #  LibreHardwareMonitorLib sensors and writes JSON to stdout.
+    #  Running it as a child process means the .NET runtime resolves
+    #  LHM's dependencies naturally from the EXE's own directory — no
+    #  Add-Type, no AppDomain tricks, no ALC wiring required.
+    #
+    #  EXE location: Tools\SensorBridge\FixPC.SensorBridge.exe
+    #  This file is a prebuilt runtime dependency included in release
+    #  packages.  End users do not need to build it.  See:
+    #  Tools\SensorBridge\README.md for developer build instructions.
+    #
+    #  If the EXE is absent or fails, this tier is silently skipped
+    #  and the WMI bridge / ACPI / storage tiers run as before.
+    # ============================================================
+    $bridgePath = if ($ToolkitRoot) {
+        [System.IO.Path]::Combine($ToolkitRoot, "Tools", "SensorBridge", "FixPC.SensorBridge.exe")
+    } else { $null }
 
-    if ($lhmRunning) {
-        $lhmPid = ($lhmProc | Select-Object -First 1).Id
+    if ($bridgePath -and (Test-Path $bridgePath -PathType Leaf -ErrorAction SilentlyContinue)) {
         Push-LogMessage -State $State `
-            -Message "  LibreHardwareMonitor.exe: running (PID ${lhmPid})." -Type "info"
-    } else {
-        Push-LogMessage -State $State `
-            -Message "  LibreHardwareMonitor.exe: not running." -Type "info"
-    }
-    if ($ohmRunning) {
-        $ohmPid = ($ohmProc | Select-Object -First 1).Id
-        Push-LogMessage -State $State `
-            -Message "  OpenHardwareMonitor.exe: running (PID ${ohmPid})." -Type "info"
-    } else {
-        Push-LogMessage -State $State `
-            -Message "  OpenHardwareMonitor.exe: not running." -Type "info"
-    }
+            -Message "  SensorBridge: found — running '$bridgePath'." -Type "info"
 
-    # Store for Analyze phase — used to tailor sensor-unavailable advisory message
-    $Result.Data["LhmRunning"] = $lhmRunning
-    $Result.Data["OhmRunning"] = $ohmRunning
-
-    # --- Namespace and sensor queries (two-path per namespace) ---------------
-    $nsCandidates = [ordered]@{
-        "root\LibreHardwareMonitor" = $lhmRunning
-        "root\OpenHardwareMonitor"  = $ohmRunning
-    }
-
-    foreach ($nsEntry in $nsCandidates.GetEnumerator()) {
-        $ns         = $nsEntry.Key
-        $procActive = $nsEntry.Value   # bool: matching process is running
-        $shortNs    = $ns.Split('\')[-1]
-        $nsLeaf     = $shortNs
-
-        Push-LogMessage -State $State `
-            -Message "  Testing WMI namespace: ${ns}" -Type "info"
-
-        # Informational __NAMESPACE check — NOT a gate.
-        # Dynamic providers may not appear here; we always try the query.
+        $bridgeProc = $null
         try {
-            $rootChildren = Get-CimInstance -Namespace "root" `
-                -ClassName "__NAMESPACE" -ErrorAction Stop
-            if ($rootChildren) {
-                $nsInList = [bool]($rootChildren | Where-Object { $_.Name -eq $nsLeaf })
-                Push-LogMessage -State $State `
-                    -Message "  ${ns}: in root\__NAMESPACE = ${nsInList} (informational; dynamic providers may not appear here — query attempted regardless)." `
-                    -Type "info"
+            # Run the bridge as a child process.  Using System.Diagnostics.Process gives
+            # us stdout capture and a hard timeout — essential for a hardware-access tool.
+            $bridgeProc = [System.Diagnostics.Process]::new()
+            $bridgeProc.StartInfo.FileName               = $bridgePath
+            $bridgeProc.StartInfo.RedirectStandardOutput = $true
+            $bridgeProc.StartInfo.RedirectStandardError  = $true
+            $bridgeProc.StartInfo.UseShellExecute        = $false
+            $bridgeProc.StartInfo.CreateNoWindow         = $true
+            $bridgeProc.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+
+            [void]$bridgeProc.Start()
+
+            # ReadToEnd before WaitForExit to avoid deadlock on large stdout
+            $bridgeJson   = $bridgeProc.StandardOutput.ReadToEnd()
+            $bridgeStderr = $bridgeProc.StandardError.ReadToEnd()
+            $timedOut     = -not $bridgeProc.WaitForExit(8000)  # 8 s hard limit
+
+            if ($timedOut) {
+                try { $bridgeProc.Kill() } catch { }
+                throw "SensorBridge timed out after 8 seconds."
             }
-        } catch { }
 
-        # --- Path 1: Get-CimInstance  (WS-Management / WinRM) ---------------
-        $allSensors     = $null
-        $allSensorCount = 0
-        $cimError       = $null
-        try {
-            $allSensors     = Get-CimInstance -Namespace $ns -ClassName "Sensor" -ErrorAction Stop
-            $allSensorCount = @($allSensors).Count
-            Push-LogMessage -State $State `
-                -Message "  ${shortNs} CimInstance (WS-Man): OK — ${allSensorCount} sensors." -Type "info"
-        } catch {
-            $cimError = $_.Exception.Message
-            Push-LogMessage -State $State `
-                -Message "  ${shortNs} CimInstance (WS-Man) failed: ${cimError}" -Type "info"
-        }
+            if ($bridgeProc.ExitCode -ne 0) {
+                $errDetail = if ($bridgeStderr) { $bridgeStderr.Trim() } else { "exit code $($bridgeProc.ExitCode)" }
+                throw "SensorBridge exited with error: $errDetail"
+            }
 
-        # --- Path 2: Get-WmiObject  (DCOM / RPC) — fallback when CimInstance
-        #     failed or returned 0.  DCOM reaches dynamic providers that WS-Man
-        #     cannot — notably LHM when WinRM is restricted or misconfigured. ----
-        if ($allSensorCount -eq 0) {
-            $wmiError = $null
-            try {
-                $wmiRaw = Get-WmiObject -Namespace $ns -Class "Sensor" -ErrorAction Stop
-                if ($wmiRaw) {
-                    $allSensors     = @($wmiRaw)
-                    $allSensorCount = $allSensors.Count
-                    Push-LogMessage -State $State `
-                        -Message "  ${shortNs} WmiObject (DCOM): OK — ${allSensorCount} sensors." -Type "info"
-                } else {
-                    Push-LogMessage -State $State `
-                        -Message "  ${shortNs} WmiObject (DCOM): query returned no objects." -Type "info"
+            if (-not $bridgeJson) { throw "SensorBridge produced no output." }
+
+            $bridgeData = $bridgeJson | ConvertFrom-Json -ErrorAction Stop
+
+            if ($bridgeData.error) {
+                throw "SensorBridge reported: $($bridgeData.error)"
+            }
+
+            # ── Map bridge JSON into shared sensor collections ────────────────
+            $bTempCount  = 0
+            $bFanCount   = 0
+            $bLevelCount = 0
+
+            foreach ($t in @($bridgeData.temperatures)) {
+                $val = [float]$t.value
+                if ($val -gt 0 -and $val -le 120) {
+                    $ohmTemps.Add([ordered]@{
+                        Name         = "$($t.name)"
+                        HardwareName = "$($t.hardwareName)"
+                        TempC        = [math]::Round($val, 1)
+                    })
+                    $bTempCount++
                 }
-            } catch {
-                $wmiError = $_.Exception.Message
-                Push-LogMessage -State $State `
-                    -Message "  ${shortNs} WmiObject (DCOM) failed: ${wmiError}" -Type "info"
             }
-        }
 
-        # --- Evaluate combined result ----------------------------------------
-        if ($allSensorCount -eq 0) {
-            if ($procActive) {
-                $bothFailed = $null -ne $cimError -and ($null -ne $wmiError -or $allSensorCount -eq 0)
-                if ($bothFailed) {
-                    Push-LogMessage -State $State `
-                        -Message "  WARN: ${shortNs} process IS running but both WMI access paths returned no sensor data. LHM requires Administrator privileges to register its WMI provider. Re-launch LibreHardwareMonitor as Administrator to enable the WMI bridge." `
-                        -Type "warn"
-                } else {
-                    Push-LogMessage -State $State `
-                        -Message "  WARN: ${shortNs} query succeeded but returned 0 sensors. LHM may still be initialising hardware monitoring." `
-                        -Type "warn"
-                }
-            } else {
-                Push-LogMessage -State $State `
-                    -Message "  ${shortNs}: no sensors returned and process not running — skipping." `
-                    -Type "info"
-            }
-            continue
-        }
-
-        # --- Filter by SensorType in PowerShell (never WQL on LHM bridge) ----
-        $ohmNamespace = $ns
-
-        $tempSensors  = @($allSensors | Where-Object { $_.SensorType -eq "Temperature" })
-        $fanSensors   = @($allSensors | Where-Object { $_.SensorType -eq "Fan"         })
-        $levelSensors = @($allSensors | Where-Object { $_.SensorType -eq "Level"       })
-        $rawTempCount = $tempSensors.Count
-
-        foreach ($s in $tempSensors) {
-            if ($null -ne $s.Value -and $s.Value -gt 0 -and $s.Value -le 120) {
-                $ohmTemps.Add([ordered]@{
-                    Name         = if ($s.Name)         { $s.Name         } else { "Unknown" }
-                    HardwareName = if ($s.HardwareName) { $s.HardwareName } else { "" }
-                    TempC        = [math]::Round($s.Value, 1)
-                })
-            }
-        }
-
-        foreach ($f in $fanSensors) {
-            if ($null -ne $f.Value) {
+            foreach ($f in @($bridgeData.fans)) {
                 $ohmFans.Add([ordered]@{
-                    Name         = if ($f.Name)         { $f.Name         } else { "Fan" }
-                    HardwareName = if ($f.HardwareName) { $f.HardwareName } else { "" }
-                    RPM          = [math]::Round($f.Value, 0)
+                    Name         = "$($f.name)"
+                    HardwareName = "$($f.hardwareName)"
+                    RPM          = [math]::Round([float]$f.value, 0)
                 })
+                $bFanCount++
+            }
+
+            foreach ($l in @($bridgeData.levels)) {
+                $ohmLevelSensors += [ordered]@{
+                    Name         = "$($l.name)"
+                    HardwareName = "$($l.hardwareName)"
+                    Value        = [float]$l.value
+                }
+                $bLevelCount++
+            }
+
+            $ohmNamespace = "SensorBridge"
+            Push-LogMessage -State $State `
+                -Message "  SensorBridge: OK — Temp: ${bTempCount} | Fan: ${bFanCount} | Level: ${bLevelCount}" `
+                -Type "info"
+
+        } catch {
+            Push-LogMessage -State $State `
+                -Message "  SensorBridge: failed — $($_.Exception.Message)" -Type "warn"
+            # Clear any partial results; fall through to WMI bridge
+            $ohmTemps.Clear()
+            $ohmFans.Clear()
+            $ohmLevelSensors = @()
+            $ohmNamespace    = $null
+        } finally {
+            if ($null -ne $bridgeProc -and -not $bridgeProc.HasExited) {
+                try { $bridgeProc.Kill() } catch { }
             }
         }
-
-        $ohmLevelSensors = $levelSensors
-
+    } elseif ($bridgePath) {
         Push-LogMessage -State $State `
-            -Message "  Sensor source: ${shortNs} | Temp: $($ohmTemps.Count) (raw: ${rawTempCount}) | Fan: $($ohmFans.Count) | Level: $($ohmLevelSensors.Count)" `
+            -Message "  SensorBridge: EXE not found at '$bridgePath' — falling through to WMI bridge." `
             -Type "info"
-
-        break  # stop after first successful namespace
+        Push-LogMessage -State $State `
+            -Message "  SensorBridge: include the published Tools\SensorBridge output in the release package to enable direct sensor access." `
+            -Type "info"
+    } else {
+        Push-LogMessage -State $State `
+            -Message "  SensorBridge: ToolkitRoot not set — skipping." -Type "info"
     }
 
+    # ============================================================
+    #  SENSOR TIER 2: LibreHardwareMonitor / OpenHardwareMonitor WMI bridge
+    #
+    #  This tier runs only when the direct DLL tier did not succeed.
+    #  It tries two WMI access paths (WS-Man then DCOM) per namespace.
+    #
+    #  Detection strategy (two-path, fully logged):
+    #    1. Check whether LHM/OHM processes are running.  This informs advisory
+    #       messages but does NOT gate the WMI queries.
+    #    2. Get-CimInstance (WS-Management / WinRM) — primary path.
+    #    3. Get-WmiObject (DCOM) — fallback if CimInstance fails or returns 0.
+    #    4. __NAMESPACE list check is informational only — NOT a gate.
+    #    5. Sensor type filtering always done in PowerShell (never WQL).
+    #
+    #  Failure modes logged distinctly:
+    #    • process running, both paths failed → WMI bridge needs elevated privileges
+    #    • CimInstance failed, WmiObject OK   → DCOM path used
+    #    • both paths 0 sensors               → LHM may still be initialising
+    #    • sensors found, no CPU match        → full sensor name dump logged
+    # ============================================================
     if (-not $ohmNamespace) {
-        $anyProcRunning = $lhmRunning -or $ohmRunning
-        if ($anyProcRunning) {
+        # --- Process discovery (always done for advisory messages) -----------
+        $lhmProc = $null
+        $ohmProc = $null
+        try { $lhmProc = Get-Process -Name "LibreHardwareMonitor" -ErrorAction SilentlyContinue } catch { }
+        try { $ohmProc = Get-Process -Name "OpenHardwareMonitor"  -ErrorAction SilentlyContinue } catch { }
+
+        $lhmRunning = [bool]$lhmProc
+        $ohmRunning = [bool]$ohmProc
+
+        if ($lhmRunning) {
+            $lhmPid = ($lhmProc | Select-Object -First 1).Id
             Push-LogMessage -State $State `
-                -Message "  No LHM/OHM sensor source available despite monitor process running. WMI bridge requires Administrator privileges. ACPI thermal zones: $($acpiTemps.Count)." `
-                -Type "warn"
+                -Message "  LibreHardwareMonitor.exe: running (PID ${lhmPid})." -Type "info"
         } else {
             Push-LogMessage -State $State `
-                -Message "  No LHM/OHM sensor source available. ACPI thermal zones: $($acpiTemps.Count)." `
-                -Type "info"
+                -Message "  LibreHardwareMonitor.exe: not running." -Type "info"
         }
+        if ($ohmRunning) {
+            $ohmPid = ($ohmProc | Select-Object -First 1).Id
+            Push-LogMessage -State $State `
+                -Message "  OpenHardwareMonitor.exe: running (PID ${ohmPid})." -Type "info"
+        } else {
+            Push-LogMessage -State $State `
+                -Message "  OpenHardwareMonitor.exe: not running." -Type "info"
+        }
+
+        # --- Namespace and sensor queries (two-path per namespace) -----------
+        $nsCandidates = [ordered]@{
+            "root\LibreHardwareMonitor" = $lhmRunning
+            "root\OpenHardwareMonitor"  = $ohmRunning
+        }
+
+        foreach ($nsEntry in $nsCandidates.GetEnumerator()) {
+            $ns         = $nsEntry.Key
+            $procActive = $nsEntry.Value
+            $shortNs    = $ns.Split('\')[-1]
+            $nsLeaf     = $shortNs
+
+            Push-LogMessage -State $State `
+                -Message "  Testing WMI namespace: ${ns}" -Type "info"
+
+            # Informational __NAMESPACE check — NOT a gate
+            try {
+                $rootChildren = Get-CimInstance -Namespace "root" `
+                    -ClassName "__NAMESPACE" -ErrorAction Stop
+                if ($rootChildren) {
+                    $nsInList = [bool]($rootChildren | Where-Object { $_.Name -eq $nsLeaf })
+                    Push-LogMessage -State $State `
+                        -Message "  ${ns}: in root\__NAMESPACE = ${nsInList} (informational; dynamic providers may not appear here — query attempted regardless)." `
+                        -Type "info"
+                }
+            } catch { }
+
+            # Path 1: Get-CimInstance (WS-Management / WinRM)
+            $allSensors     = $null
+            $allSensorCount = 0
+            $cimError       = $null
+            try {
+                $allSensors     = Get-CimInstance -Namespace $ns -ClassName "Sensor" -ErrorAction Stop
+                $allSensorCount = @($allSensors).Count
+                Push-LogMessage -State $State `
+                    -Message "  ${shortNs} CimInstance (WS-Man): OK — ${allSensorCount} sensors." -Type "info"
+            } catch {
+                $cimError = $_.Exception.Message
+                Push-LogMessage -State $State `
+                    -Message "  ${shortNs} CimInstance (WS-Man) failed: ${cimError}" -Type "info"
+            }
+
+            # Path 2: Get-WmiObject (DCOM) — fallback when CimInstance fails or returns 0
+            if ($allSensorCount -eq 0) {
+                $wmiError = $null
+                try {
+                    $wmiRaw = Get-WmiObject -Namespace $ns -Class "Sensor" -ErrorAction Stop
+                    if ($wmiRaw) {
+                        $allSensors     = @($wmiRaw)
+                        $allSensorCount = $allSensors.Count
+                        Push-LogMessage -State $State `
+                            -Message "  ${shortNs} WmiObject (DCOM): OK — ${allSensorCount} sensors." -Type "info"
+                    } else {
+                        Push-LogMessage -State $State `
+                            -Message "  ${shortNs} WmiObject (DCOM): query returned no objects." -Type "info"
+                    }
+                } catch {
+                    $wmiError = $_.Exception.Message
+                    Push-LogMessage -State $State `
+                        -Message "  ${shortNs} WmiObject (DCOM) failed: ${wmiError}" -Type "info"
+                }
+            }
+
+            # Evaluate combined result
+            if ($allSensorCount -eq 0) {
+                if ($procActive) {
+                    $bothFailed = $null -ne $cimError -and ($null -ne $wmiError -or $allSensorCount -eq 0)
+                    if ($bothFailed) {
+                        Push-LogMessage -State $State `
+                            -Message "  WARN: ${shortNs} process IS running but both WMI access paths returned no sensor data. LHM requires Administrator privileges to register its WMI provider. Re-launch LibreHardwareMonitor as Administrator to enable the WMI bridge." `
+                            -Type "warn"
+                    } else {
+                        Push-LogMessage -State $State `
+                            -Message "  WARN: ${shortNs} query succeeded but returned 0 sensors. LHM may still be initialising hardware monitoring." `
+                            -Type "warn"
+                    }
+                } else {
+                    Push-LogMessage -State $State `
+                        -Message "  ${shortNs}: no sensors returned and process not running — skipping." `
+                        -Type "info"
+                }
+                continue
+            }
+
+            # Filter by SensorType in PowerShell (never WQL on LHM bridge)
+            $ohmNamespace = $ns
+            $tempSensors  = @($allSensors | Where-Object { $_.SensorType -eq "Temperature" })
+            $fanSensors   = @($allSensors | Where-Object { $_.SensorType -eq "Fan"         })
+            $levelSensors = @($allSensors | Where-Object { $_.SensorType -eq "Level"       })
+            $rawTempCount = $tempSensors.Count
+
+            foreach ($s in $tempSensors) {
+                if ($null -ne $s.Value -and $s.Value -gt 0 -and $s.Value -le 120) {
+                    $ohmTemps.Add([ordered]@{
+                        Name         = if ($s.Name)         { $s.Name         } else { "Unknown" }
+                        HardwareName = if ($s.HardwareName) { $s.HardwareName } else { "" }
+                        TempC        = [math]::Round($s.Value, 1)
+                    })
+                }
+            }
+            foreach ($f in $fanSensors) {
+                if ($null -ne $f.Value) {
+                    $ohmFans.Add([ordered]@{
+                        Name         = if ($f.Name)         { $f.Name         } else { "Fan" }
+                        HardwareName = if ($f.HardwareName) { $f.HardwareName } else { "" }
+                        RPM          = [math]::Round($f.Value, 0)
+                    })
+                }
+            }
+            $ohmLevelSensors = $levelSensors
+
+            Push-LogMessage -State $State `
+                -Message "  Sensor source: ${shortNs} | Temp: $($ohmTemps.Count) (raw: ${rawTempCount}) | Fan: $($ohmFans.Count) | Level: $($ohmLevelSensors.Count)" `
+                -Type "info"
+
+            break
+        }
+
+        if (-not $ohmNamespace) {
+            $anyProcRunning = $lhmRunning -or $ohmRunning
+            if ($anyProcRunning) {
+                Push-LogMessage -State $State `
+                    -Message "  No LHM/OHM sensor source available despite monitor process running. WMI bridge requires Administrator privileges. ACPI thermal zones: $($acpiTemps.Count)." `
+                    -Type "warn"
+            } else {
+                Push-LogMessage -State $State `
+                    -Message "  No LHM/OHM sensor source available. ACPI thermal zones: $($acpiTemps.Count)." `
+                    -Type "info"
+            }
+        }
+    } else {
+        Push-LogMessage -State $State `
+            -Message "  WMI bridge tier skipped — sensor data already obtained from LHM DLL." `
+            -Type "info"
     }
+
+    # Store for Analyze phase — used to tailor sensor-unavailable advisory message.
+    # LhmRunning / OhmRunning remain $false when the DLL tier succeeded (process
+    # check was skipped), which is correct: the advisory says "install LHM" when
+    # neither monitor is running and the DLL also isn't available.
+    $Result.Data["LhmRunning"] = $lhmRunning
+    $Result.Data["OhmRunning"] = $ohmRunning
 
     $Result.Data["OhmTemps"]        = $ohmTemps
     $Result.Data["OhmFans"]         = $ohmFans
