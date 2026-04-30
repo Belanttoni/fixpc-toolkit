@@ -248,6 +248,11 @@ $Script:Export_Hardware = {
     # Monitor-running flags — used by HTML to choose between "install LHM" and "run as admin"
     $Result.ExportData["lhmRunning"]       = [bool]$d["LhmRunning"]
     $Result.ExportData["ohmRunning"]       = [bool]$d["OhmRunning"]
+    # PawnIO / CPU-temp-unavailable context for HTML rendering
+    $Result.ExportData["pawnIODetected"]           = [bool]$d["PawnIODetected"]
+    $Result.ExportData["cpuTempUnavailableReason"] = $d["CpuTempUnavailableReason"]
+    $Result.ExportData["pawnIOInstallAttempted"]   = [bool]$d["PawnIOInstallAttempted"]
+    $Result.ExportData["pawnIOInstallResult"]      = $d["PawnIOInstallResult"]
 
     # ============================================================
     #  OVERALL CLASS  (worst severity across all findings)

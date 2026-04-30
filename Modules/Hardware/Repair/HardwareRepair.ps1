@@ -4,10 +4,10 @@
     Advisory-only — no hardware state is modified.
     Scriptblock stored as $Script:Repair_Hardware.
 
-    Hardware V1 repair policy:
+    Hardware repair policy:
         DiagnoseOnly — Invoke-ModuleLifecycle does not call this block.
-        SafeRepair   — Advisory records only. No hardware changes.
-        FullRepair   — Advisory records only. No firmware or invasive actions.
+        SafeRepair   — Advisory records + PawnIO driver install if needed.
+        FullRepair   — Same as SafeRepair.
 
     Rationale:
         Hardware-level changes (firmware updates, BIOS configuration,
@@ -16,11 +16,19 @@
         user confirmation and vendor procedures. V1 generates clear
         actionable guidance instead.
 
-    Output:
-        ActionsTaken records describe what a technician or user should do.
-        Each record Action="Advisory", Success=$true, Detail=recommendation.
+    PawnIO install:
+        If SensorBridge ran but returned 0 CPU temperature sensors and
+        Tools\PawnIO\PawnIO_setup.exe is present, the installer is run
+        silently with -install -silent.  Requires Administrator privileges.
+        SensorBridge is retried after a successful install.  All failures
+        are non-fatal — the module continues and reports the outcome.
 
-.VERSION 1.0
+    Output:
+        ActionsTaken records describe what was done or advise the technician.
+        Advisory records: Action="Advisory", Success=$true, Detail=recommendation.
+        PawnIO records:   Action="PawnIO-Install", Success=<bool>, Detail=outcome.
+
+.VERSION 1.1
 #>
 
 $Script:Repair_Hardware = {
@@ -93,4 +101,145 @@ $Script:Repair_Hardware = {
             -Detail  "No hardware concerns detected. No action required at this time."))
         Push-LogMessage -State $State -Message "  No hardware advisories — all checks passed." -Type "ok"
     }
+
+    # ============================================================
+    #  PAWNIO DRIVER INSTALL  (SafeRepair / FullRepair only)
+    #  Installs PawnIO when SensorBridge ran but returned no CPU temps.
+    #  Lifecycle guarantees this block is never reached in DiagnoseOnly.
+    #  Admin check is explicit because kernel driver install requires it.
+    # ============================================================
+    $d = $Result.Data
+
+    $sbRanOk     = [bool]$d["SensorBridgeRanOk"]
+    $sbTempCount = [int]$d["SensorBridgeTempCount"]
+    $pawnDetected = [bool]$d["PawnIODetected"]
+    $setupPath    = $d["PawnIOSetupPath"]
+    $bridgePath   = $d["SensorBridgePath"]
+
+    $pawnInstallAttempted = $false
+    $pawnInstallSuccess   = $false
+    $pawnInstallResult    = $null
+
+    # Condition: bridge ran cleanly, returned 0 CPU temps, PawnIO not already present
+    $needsPawnIO = $sbRanOk -and ($sbTempCount -eq 0) -and (-not $pawnDetected)
+
+    if ($needsPawnIO -and $setupPath -and (Test-Path $setupPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+
+        # Kernel driver installation requires Administrator privileges
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+
+        if (-not $isAdmin) {
+            Push-LogMessage -State $State `
+                -Message "  PawnIO: install skipped — Administrator privileges required for kernel driver installation." `
+                -Type "info"
+            $pawnInstallResult = "Skipped — not running as Administrator."
+        } else {
+            Push-LogMessage -State $State `
+                -Message "  PawnIO: installing from '$setupPath' (-install -silent)..." -Type "info"
+            $pawnInstallAttempted = $true
+
+            try {
+                $installProc = [System.Diagnostics.Process]::new()
+                $installProc.StartInfo.FileName               = $setupPath
+                $installProc.StartInfo.Arguments              = "-install -silent"
+                $installProc.StartInfo.UseShellExecute        = $false
+                $installProc.StartInfo.CreateNoWindow         = $true
+                $installProc.StartInfo.RedirectStandardOutput = $true
+                $installProc.StartInfo.RedirectStandardError  = $true
+                [void]$installProc.Start()
+                [void]$installProc.StandardOutput.ReadToEnd()
+                [void]$installProc.StandardError.ReadToEnd()
+                $timedOut = -not $installProc.WaitForExit(30000)   # 30 s hard limit
+
+                if ($timedOut) {
+                    try { $installProc.Kill() } catch { }
+                    $pawnInstallResult = "Install timed out after 30 seconds."
+                    Push-LogMessage -State $State -Message "  PawnIO: install timed out." -Type "warn"
+                } else {
+                    $exitCode = $installProc.ExitCode
+                    if ($exitCode -eq 0) {
+                        $pawnInstallSuccess = $true
+                        $pawnInstallResult  = "Installed successfully (exit 0)."
+                        Push-LogMessage -State $State -Message "  PawnIO: install succeeded." -Type "ok"
+                    } else {
+                        $pawnInstallResult = "Install failed — exit code ${exitCode}."
+                        Push-LogMessage -State $State `
+                            -Message "  PawnIO: install failed (exit ${exitCode})." -Type "warn"
+                    }
+                }
+            } catch {
+                $pawnInstallResult = "Install exception: $($_.Exception.Message)"
+                Push-LogMessage -State $State `
+                    -Message "  PawnIO: install exception — $($_.Exception.Message)" -Type "warn"
+            }
+
+            # ── Retry SensorBridge after successful PawnIO install ────────────
+            if ($pawnInstallSuccess -and $bridgePath -and (Test-Path $bridgePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+                Push-LogMessage -State $State `
+                    -Message "  PawnIO: retrying SensorBridge to confirm CPU sensor access..." -Type "info"
+                try {
+                    $retryProc = [System.Diagnostics.Process]::new()
+                    $retryProc.StartInfo.FileName               = $bridgePath
+                    $retryProc.StartInfo.RedirectStandardOutput = $true
+                    $retryProc.StartInfo.RedirectStandardError  = $true
+                    $retryProc.StartInfo.UseShellExecute        = $false
+                    $retryProc.StartInfo.CreateNoWindow         = $true
+                    $retryProc.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+                    [void]$retryProc.Start()
+                    $retryJson = $retryProc.StandardOutput.ReadToEnd()
+                    [void]$retryProc.StandardError.ReadToEnd()
+                    $retryTO = -not $retryProc.WaitForExit(8000)
+
+                    if (-not $retryTO -and $retryProc.ExitCode -eq 0 -and $retryJson) {
+                        $retryData = $retryJson | ConvertFrom-Json -ErrorAction SilentlyContinue
+                        if ($retryData -and -not $retryData.error) {
+                            $retryCpuCount = @($retryData.temperatures | Where-Object {
+                                "$($_.name)" -match "CPU|Core|Package|Tdie|Tctl"
+                            }).Count
+
+                            if ($retryCpuCount -gt 0) {
+                                Push-LogMessage -State $State `
+                                    -Message "  PawnIO: SensorBridge retry found ${retryCpuCount} CPU sensor(s) — driver active." `
+                                    -Type "ok"
+                                $pawnInstallResult += " Retry: ${retryCpuCount} CPU sensor(s) now available."
+                                # Update Data so Export/HTML reflect the improved state
+                                $d["SensorBridgeRanOk"]          = $true
+                                $d["SensorBridgeTempCount"]       = $retryCpuCount
+                                $d["CpuTempUnavailableReason"]    = $null
+                            } else {
+                                Push-LogMessage -State $State `
+                                    -Message "  PawnIO: SensorBridge retry still returned 0 CPU sensors — reboot may be required." `
+                                    -Type "info"
+                                $pawnInstallResult += " Retry: 0 CPU sensors — reboot may be required to activate driver."
+                            }
+                        }
+                    }
+                } catch {
+                    Push-LogMessage -State $State `
+                        -Message "  PawnIO: SensorBridge retry failed — $($_.Exception.Message)" -Type "info"
+                }
+            }
+        }
+
+    } elseif ($needsPawnIO -and $setupPath) {
+        Push-LogMessage -State $State `
+            -Message "  PawnIO: setup not found at '$setupPath' — install skipped." -Type "info"
+        $pawnInstallResult = "Setup not found at expected path."
+    } else {
+        Push-LogMessage -State $State -Message "  PawnIO: install not required." -Type "info"
+    }
+
+    if ($pawnInstallAttempted) {
+        $Result.ActionsTaken.Add((New-ActionRecord `
+            -Action  "PawnIO-Install" `
+            -Target  "PawnIO_setup.exe" `
+            -Success $pawnInstallSuccess `
+            -Detail  $pawnInstallResult))
+    }
+
+    # Store outcomes for Export phase
+    $d["PawnIOInstallAttempted"] = $pawnInstallAttempted
+    $d["PawnIOInstallSuccess"]   = $pawnInstallSuccess
+    $d["PawnIOInstallResult"]    = $pawnInstallResult
 }

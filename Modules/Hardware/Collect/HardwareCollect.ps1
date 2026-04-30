@@ -176,6 +176,10 @@ $Script:Collect_Hardware = {
     $lhmRunning = $false
     $ohmRunning = $false
 
+    # SensorBridge outcome — populated by TIER 0, read by PawnIO detection and Repair
+    $sensorBridgeRanOk     = $false
+    $sensorBridgeTempCount = 0
+
     # ============================================================
     #  SENSOR TIER 0: SensorBridge external helper
     #
@@ -273,7 +277,9 @@ $Script:Collect_Hardware = {
                 $bLevelCount++
             }
 
-            $ohmNamespace = "SensorBridge"
+            $ohmNamespace          = "SensorBridge"
+            $sensorBridgeRanOk     = $true
+            $sensorBridgeTempCount = $bTempCount
             Push-LogMessage -State $State `
                 -Message "  SensorBridge: OK — Temp: ${bTempCount} | Fan: ${bFanCount} | Level: ${bLevelCount}" `
                 -Type "info"
@@ -629,6 +635,51 @@ $Script:Collect_Hardware = {
 
     $Result.Data["SensorSource"]    = $sensorSource
     $Result.Data["SensorAvailable"] = ($null -ne $cpuTempC -or $driveTemps.Count -gt 0)
+
+    # ============================================================
+    #  PAWNIO STATUS — kernel-level sensor driver detection
+    #  PawnIO provides ring-0 access that LibreHardwareMonitorLib
+    #  requires to read CPU temperatures on modern hardware.
+    #  Detection here is read-only.  Installation is in Repair.
+    # ============================================================
+    $pawnIODetected = $false
+    try {
+        $pawnIOSvc = Get-Service -Name "PawnIO" -ErrorAction SilentlyContinue
+        if ($null -ne $pawnIOSvc) {
+            $pawnIODetected = $true
+            Push-LogMessage -State $State `
+                -Message "  PawnIO: service detected (Status: $($pawnIOSvc.Status))." -Type "info"
+        } else {
+            Push-LogMessage -State $State -Message "  PawnIO: service not detected." -Type "info"
+        }
+    } catch {
+        Push-LogMessage -State $State `
+            -Message "  PawnIO: service check failed — $($_.Exception.Message)" -Type "info"
+    }
+
+    # Compute a technician-friendly reason when CPU temperature is unavailable
+    $cpuTempUnavailableReason = $null
+    if ($null -eq $cpuTempC) {
+        if ($sensorBridgeRanOk -and $sensorBridgeTempCount -eq 0) {
+            $cpuTempUnavailableReason = "CPU temperature unavailable — SensorBridge ran but returned no CPU sensors. Low-level sensor driver (PawnIO) may be unavailable or blocked."
+        } else {
+            $cpuTempUnavailableReason = "CPU temperature unavailable — low-level sensor driver (PawnIO) unavailable or blocked."
+        }
+        Push-LogMessage -State $State `
+            -Message "  CPU temp unavailable: $cpuTempUnavailableReason" -Type "info"
+    }
+
+    # PawnIO setup path stored for Repair phase
+    $pawnIOSetupPath = if ($ToolkitRoot) {
+        [System.IO.Path]::Combine($ToolkitRoot, "Tools", "PawnIO", "PawnIO_setup.exe")
+    } else { $null }
+
+    $Result.Data["PawnIODetected"]           = $pawnIODetected
+    $Result.Data["PawnIOSetupPath"]          = $pawnIOSetupPath
+    $Result.Data["SensorBridgePath"]         = $bridgePath
+    $Result.Data["SensorBridgeRanOk"]        = $sensorBridgeRanOk
+    $Result.Data["SensorBridgeTempCount"]    = $sensorBridgeTempCount
+    $Result.Data["CpuTempUnavailableReason"] = $cpuTempUnavailableReason
 
     # ============================================================
     #  BATTERY — capacity, health, and charge status
